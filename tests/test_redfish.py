@@ -15,7 +15,7 @@ def test_systems_collection_full(client):
     r = client.get("/redfish/v1/Systems")
     assert r.status_code == 200
     members = r.json()["Members"]
-    assert len(members) == 2520
+    assert len(members) == len(STORE.trays)
     ids = {m["@odata.id"] for m in members}
     assert "/redfish/v1/Systems/su-1-rack-00-tray-00" in ids
 

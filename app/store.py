@@ -30,7 +30,9 @@ CLUSTER = [
              ("su-8", 16), ("su-9", 16), ("su-10", 16), ("su-11", 2)]}, # 104 racks
 ]
 # Optional dev cap: NICO_RACKS_LIMIT=N seeds only the first N racks (faster tests).
-_RACK_LIMIT = int(os.environ.get("NICO_RACKS_LIMIT", "0") or 0)
+# Read at seed() time so test fixtures can cap the cluster before a reset.
+def _rack_limit() -> int:
+    return int(os.environ.get("NICO_RACKS_LIMIT", "0") or 0)
 RACK_ID = "su-1-rack-00"    # first rack (back-compat handle for scenarios/tests)
 
 
@@ -170,12 +172,13 @@ class Store:
     def seed(self):
         with self.lock:
             self.racks.clear(); self.trays.clear(); self.dpus.clear()
+            lim = _rack_limit()
             n_racks = 0
             for site in CLUSTER:
                 oct2 = 60
                 for su_id, rack_n in site["sus"]:
                     for r in range(rack_n):
-                        if _RACK_LIMIT and n_racks >= _RACK_LIMIT:
+                        if lim and n_racks >= lim:
                             break
                         rack_id = f"{su_id}-rack-{r:02d}"
                         rack = Rack(rack_id=rack_id, su_id=su_id,

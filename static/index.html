@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NICo Emulator — Vera Rubin NVL72 Digital Twin</title>
+<title>NICo Emulator — Site-Local NICo Control Plane</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230f1722'/%3E%3Crect x='3' y='3' width='10' height='4' rx='1' fill='%2376b900'/%3E%3Crect x='3' y='9' width='10' height='4' rx='1' fill='%2376b900'/%3E%3C/svg%3E">
 
 <style>
@@ -34,6 +34,8 @@
     font-weight:600;font-size:13px;cursor:pointer}
   nav.tabs button:hover{color:var(--text);filter:none}
   nav.tabs button.active{color:var(--green);border-bottom-color:var(--green)}
+  nav.tabs button.primary{color:var(--text)}
+  nav.tabs button.primary.active{color:var(--green)}
   nav.tabs button .badge{margin-left:6px}
   main{padding:20px 22px;max-width:1400px;margin:0 auto}
   section.view{display:none}
@@ -45,13 +47,79 @@
     border:1px solid var(--line);border-radius:10px;padding:1px 8px;font-size:11px}
   .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
-  /* twin summary */
-  .stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
-  .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  /* stat strips */
+  .stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
   .stat .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
-  .stat .v{font-family:var(--mono);font-size:24px;font-weight:600;margin-top:4px}
+  .stat .v{font-family:var(--mono);font-size:22px;font-weight:600;margin-top:4px}
   .stat .v.green{color:var(--green)}
-  .stat .v.small{font-size:16px}
+  .stat .v.small{font-size:15px}
+  /* ── Site Controllers: NICo instance cards ── */
+  .instances{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:980px){.instances{grid-template-columns:1fr}}
+  .inst{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px}
+  .inst.healthy{border-color:#2c4a12}
+  .inst.degraded{border-color:#4a4020}
+  .inst.critical{border-color:#4a2530}
+  .inst .ihead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+  .inst .iid{font-family:var(--mono);font-size:17px;font-weight:700;color:var(--green);
+    display:flex;align-items:center;gap:9px}
+  .inst .isite{color:var(--text);font-size:13px;margin-top:3px}
+  .inst .isite .rgn{color:var(--muted)}
+  .inst .ista{font-family:var(--mono);font-size:11px;text-align:right;color:var(--muted)}
+  .inst .ista .v{color:var(--text)}
+  .inst .iha{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:10px;line-height:1.7}
+  .inst .iha b{color:var(--text);font-weight:600}
+  .inst h3{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);
+    margin:16px 0 6px;font-weight:600;display:flex;justify-content:space-between;align-items:baseline}
+  .inst h3 .r{font-family:var(--mono);color:var(--muted);text-transform:none;letter-spacing:0}
+  .fleet{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+  .fleet .fx{background:#101a26;border:1px solid var(--line);border-radius:8px;padding:8px 6px;text-align:center}
+  .fleet .fx .k{color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.03em}
+  .fleet .fx .v{font-family:var(--mono);font-size:18px;font-weight:600;margin-top:2px}
+  .fleet .fx .v.green{color:var(--green)}
+  .breakdown{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+  .suchip{font-family:var(--mono);font-size:10px;padding:2px 8px;border-radius:9px;
+    border:1px solid var(--line);color:var(--muted)}
+  .suchip b{color:var(--text)}
+  .suchip.on{color:var(--green);border-color:#2c4a12}
+  .suchip.off{color:var(--muted)}
+  .svc-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+  @media(max-width:560px){.svc-grid{grid-template-columns:1fr}}
+  .svc{display:flex;gap:8px;align-items:flex-start;padding:6px 9px;border:1px solid var(--line);
+    border-radius:7px;background:#0e1620}
+  .svc .sd{margin-top:4px}
+  .svc .sname{font-size:11px;font-weight:600;color:var(--text)}
+  .svc .scomp{font-family:var(--mono);font-size:9.5px;color:var(--green)}
+  .svc .sdetail{color:var(--muted);font-size:10px;margin-top:1px}
+  .xnote{margin-top:16px;padding:11px 14px;border:1px dashed var(--line);border-radius:8px;
+    color:var(--muted);font-size:12px}
+  .xnote b{color:var(--amber);font-weight:600}
+  .site-detail{margin-top:16px;background:var(--card);border:1px solid var(--green);
+    border-radius:12px;padding:18px}
+  /* ── rack tiles (cluster) ── */
+  .su-block{margin-bottom:16px}
+  .su-block .suh{display:flex;gap:10px;align-items:baseline;margin-bottom:8px;flex-wrap:wrap}
+  .su-block .suh .sut{font-weight:600;font-family:var(--mono);color:var(--text)}
+  .su-block .suh .sum{color:var(--muted);font-size:11px}
+  .rack-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(52px,1fr));gap:6px}
+  .rtile{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    aspect-ratio:1;border:1px solid var(--line);border-radius:6px;cursor:pointer;font-family:var(--mono);
+    background:#101a26;transition:border-color .15s,transform .1s}
+  .rtile:hover{border-color:#33506e;transform:translateY(-1px)}
+  .rtile.ready{background:#0e2012;border-color:#254019}
+  .rtile.attention{background:#241f0e;border-color:#4a4020}
+  .rtile.degraded{background:#240e15;border-color:#4a2530}
+  .rtile .rn{color:var(--text);font-weight:700;font-size:12px}
+  .rtile .rg{color:var(--muted);font-size:9px}
+  .rtile .tdot{position:absolute;top:4px;right:4px;width:6px;height:6px;border-radius:50%;
+    background:var(--green);box-shadow:0 0 0 2px #101a26}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:11px;margin-bottom:12px}
+  .legend span{display:inline-flex;align-items:center;gap:5px}
+  .legend .sw{width:11px;height:11px;border-radius:3px;display:inline-block;border:1px solid var(--line)}
+  .legend .sw.ready{background:#0e2012;border-color:#254019}
+  .legend .sw.attention{background:#241f0e;border-color:#4a4020}
+  .legend .sw.degraded{background:#240e15;border-color:#4a2530}
   /* dpu grid */
   .dpu{cursor:pointer;transition:border-color .15s}
   .dpu:hover{border-color:#33506e}
@@ -76,7 +144,10 @@
   .badge.provisioning{color:var(--amber);border-color:#4a4020}
   .badge.degraded{color:var(--red);border-color:#4a2530}
   .badge.discovered{color:var(--muted)}
-  /* rack */
+  /* rack detail (tray rows) */
+  .rackbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .rackbar select{background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:8px;
+    padding:6px 10px;font-family:var(--mono);font-size:12px}
   .rack{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
   @media(max-width:720px){.rack{grid-template-columns:1fr}}
   .tray{display:flex;align-items:center;gap:11px;background:var(--card);
@@ -135,6 +206,7 @@
   button:hover{filter:brightness(1.08)}
   button:disabled{opacity:.5;cursor:default}
   button.sm{padding:5px 12px;font-size:12px}
+  button.ghost{background:transparent;color:var(--green);border:1px solid #2c4a12}
   .result{margin-top:12px;border-top:1px solid var(--line);padding-top:12px;display:none}
   .result.show{display:block}
   .verdict{font-family:var(--mono);font-size:12px;font-weight:600;padding:3px 10px;
@@ -161,14 +233,15 @@
 <body>
 <header>
   <div>
-    <div class="title">NICo Emulator <span class="accent">— Vera Rubin NVL72 Digital Twin</span></div>
-    <div class="sub" id="sub">Standalone NVIDIA Infra Controller · DPU-enforced tenant isolation</div>
+    <div class="title">NICo Emulator <span class="accent">— Site-Local NICo Control Plane</span></div>
+    <div class="sub" id="sub">Per-site NICo instances · NICo Core + REST + Temporal + site-agent + Rack/Machine controllers · Vera Rubin NVL72 twin</div>
   </div>
   <div id="health"><span class="pill">connecting…</span></div>
 </header>
 
 <nav class="tabs" id="tabs">
-  <button data-sec="overview" class="active">Overview</button>
+  <button data-sec="sites" class="primary active">Site Controllers</button>
+  <button data-sec="cluster">Cluster</button>
   <button data-sec="rack">Rack</button>
   <button data-sec="fabric">Fabric</button>
   <button data-sec="dpus">DPUs</button>
@@ -177,22 +250,47 @@
 </nav>
 
 <main>
-  <!-- OVERVIEW -->
-  <section class="view active" id="view-overview">
+  <!-- SITE CONTROLLERS (primary) -->
+  <section class="view active" id="view-sites">
     <div class="sub-sec">
-      <h2>Twin Summary</h2>
+      <h2>NICo Instances <span class="count" id="sites-count">0</span>
+        <span class="hint">— one site-local NICo control-plane instance per site (independent)</span></h2>
+      <div class="instances" id="instances"></div>
+      <div class="xnote" id="xnote"></div>
+      <div id="site-detail"></div>
+    </div>
+    <div class="sub-sec">
+      <h2>Reference Twin <span class="hint">— Vera Rubin NVL72 rack model (shared hardware template)</span></h2>
       <div class="stats" id="twin"></div>
     </div>
     <div class="sub-sec">
-      <h2>Recent Events <span class="count" id="ev-count">0</span></h2>
+      <h2>Recent Control-Plane Events <span class="count" id="ev-count">0</span></h2>
       <div class="events" id="events"></div>
+    </div>
+  </section>
+
+  <!-- CLUSTER -->
+  <section class="view" id="view-cluster">
+    <div class="sub-sec">
+      <h2>Cluster Fleet <span class="hint">— all racks across both NICo sites · click a rack to drill into its 18 trays</span></h2>
+      <div class="stats" id="cluster-stats"></div>
+    </div>
+    <div class="sub-sec">
+      <div class="legend">
+        <span><span class="sw ready"></span> ready</span>
+        <span><span class="sw attention"></span> attention</span>
+        <span><span class="sw degraded"></span> degraded</span>
+        <span><span class="dot ok" style="width:8px;height:8px"></span> tenant attached</span>
+      </div>
+      <div id="cluster-racks"></div>
     </div>
   </section>
 
   <!-- RACK -->
   <section class="view" id="view-rack">
     <div class="sub-sec">
-      <h2>VR NVL72 Rack — Compute Trays <span class="count" id="rack-count">0</span>
+      <div id="rack-picker"></div>
+      <h2>Rack Compute Trays <span class="count" id="rack-count">0</span>
         <span class="hint">— click a tray for Redfish + provisioning detail</span></h2>
       <div class="rack" id="rack"></div>
       <div id="rack-detail"></div>
@@ -223,6 +321,7 @@
   <!-- DPUs -->
   <section class="view" id="view-dpus">
     <div class="sub-sec">
+      <div id="dpu-picker"></div>
       <h2>DPUs <span class="count" id="dpu-count">0</span>
         <span class="hint">— click a card to drill into telemetry, functions &amp; policy</span></h2>
       <div class="cards" id="dpus"></div>
@@ -239,6 +338,7 @@
   <!-- PROVISIONING -->
   <section class="view" id="view-provisioning">
     <div class="sub-sec">
+      <div id="prov-picker"></div>
       <h2>Boot / Provisioning State <span class="count" id="prov-count">0</span>
         <span class="hint">— PXE → DHCP → iPXE → OS → Host Agent · buttons drive the boot state machine (writes)</span></h2>
       <div class="tbl-wrap"><table id="prov-table"></table></div>
@@ -264,18 +364,19 @@
 <script>
 "use strict";
 const $ = (id)=>document.getElementById(id);
-let activeSection = "overview";
+let activeSection = "sites";
 let selectedDpu = null;
 let selectedTray = null;
+let selectedRack = null;      // rack_id for Rack / Provisioning / DPUs views
+let openSite = null;          // site_id whose detail panel is expanded
 let scenariosLoaded = false;
-const busy = {};        // scenario name -> running
-const provBusy = {};    // tray_id -> provisioning walk running
-window.__trayById = {}; // redfish system cache keyed by tray Id
+let RACKS = [];               // cached [{rack_id,su_id,site_id,site}] for pickers
+const busy = {};              // scenario name -> running
+const provBusy = {};          // tray_id -> provisioning walk running
+window.__trayById = {};       // redfish system cache keyed by tray Id
 
-// Redfish boot state machine (mirrors provisioning.BOOT_SEQUENCE)
 const BOOT_SEQ = ["PXE Selected","DHCP Lease","iPXE Script Fetch","OS Boot","Host Agent Ready"];
 
-// isolation counters we surface prominently in the telemetry table
 const ISO_KEYS = [
   "dpu_intertenant_drops_total","dpu_spoof_drops_total","dpu_default_deny_drops_total",
   "dpu_acl_drops_total","dpu_vlan_violation_drops_total","dpu_vni_violation_drops_total",
@@ -291,14 +392,20 @@ async function getJSON(url, opts){
 }
 const esc = (s)=>String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
-const shortTray = (id)=>String(id).replace(/^vr-rack-\d+-/,"");
+const trayShort = (id)=>{const m=String(id).match(/tray-\d+.*/);return m?m[0]:String(id);};
+const trayNum = (id)=>{const m=String(id).match(/tray-(\d+)/);return m?m[1]:String(id);};
+const dpuTail = (id)=>{const m=String(id).match(/dpu-\d+/);return m?m[0]:String(id);};
+const rackNum = (id)=>{const m=String(id).match(/rack-(\d+)/);return m?m[1]:String(id);};
 const powerCls = (ps)=>ps==="On"?"pon":ps==="PoweringOn"?"ppending":"poff";
 const healthCls = (h)=>{const c=String(h||"").toLowerCase();
   return ["ok","warning","critical"].includes(c)?c:"unknown";};
+const statusDot = (s)=>{const c=String(s||"").toLowerCase();
+  return ["ok","warning","critical"].includes(c)?c:"unknown";};
+const siteDot = (s)=>({healthy:"ok",degraded:"warning",critical:"critical"}[s]||"unknown");
 const lcCls = (s)=>{const c=String(s||"").toLowerCase();
   return ["ready","provisioning","degraded","discovered"].includes(c)?c:"discovered";};
 
-// ── global / header ───────────────────────────────────────────────────
+// ── header ────────────────────────────────────────────────────────────
 async function loadHealth(){
   try{
     const h = await getJSON("/healthz");
@@ -311,61 +418,305 @@ async function loadHealth(){
 async function loadTwin(){
   try{
     const t = await getJSON("/emulator/v1/twin");
-    $("sub").textContent = `${t.model} · rack ${t.rack_id}`;
     const cells = [
-      ["Rack", t.rack_id, false, true],
+      ["Model", t.model, false, true],
+      ["Ref Rack", t.rack_id, false, true],
       ["Compute Trays", t.compute_trays, false, false],
-      ["GPUs", t.gpus, true, false],
-      ["DPUs", t.dpus, false, false],
-      ["Tenant Networks", t.tenant_networks, false, false],
-      ["Attachments", t.attachments, false, false],
-      ["Tenants", (t.tenants && t.tenants.length) || 0, false, false],
+      ["GPUs / rack", t.gpus, true, false],
+      ["DPUs / rack", t.dpus, false, false],
     ];
     $("twin").innerHTML = cells.map(([k,v,g,small])=>
       `<div class="stat"><div class="k">${esc(k)}</div>`
-      + `<div class="v ${g?'green':''} ${small?'small':''}">${esc(v)}</div></div>`
+      + `<div class="v ${g?'green':''} ${small?'small':''}">${esc(v==null?'—':v)}</div></div>`
     ).join("");
   }catch(e){ $("twin").innerHTML = `<div class="hint">twin unavailable</div>`; }
 }
 
-// ── Redfish tray batch (shared by Rack + Provisioning) ────────────────
-async function loadTrays(){
-  const coll = await getJSON("/redfish/v1/Systems");
-  const ids = (coll.Members||[]).map(m=>String(m["@odata.id"]).split("/").pop());
-  const list = await Promise.all(ids.map(id=>getJSON("/redfish/v1/Systems/"+id)));
-  const by = {};
-  list.forEach(t=>{ by[t.Id]=t; });
-  window.__trayById = by;
-  return list;
+// ── shared rack cache + picker ────────────────────────────────────────
+async function ensureRacks(){
+  if(RACKS.length) return RACKS;
+  try{
+    const [g,a] = await Promise.all([
+      getJSON("/emulator/v1/cluster/racks?site=gasan"),
+      getJSON("/emulator/v1/cluster/racks?site=ansan"),
+    ]);
+    RACKS = [...(g.racks||[]), ...(a.racks||[])];
+  }catch(e){ RACKS = []; }
+  if(!selectedRack && RACKS.length) selectedRack = RACKS[0].rack_id;
+  return RACKS;
 }
 
-// ── RACK view ─────────────────────────────────────────────────────────
-async function loadRack(){
+async function buildRackPicker(elId){
+  const racks = await ensureRacks();
+  const el = $(elId);
+  if(!el) return;
+  if(!racks.length){ el.innerHTML = `<div class="hint">no racks available</div>`; return; }
+  const bySite = {};
+  racks.forEach(r=>{ (bySite[r.site_id]=bySite[r.site_id]||[]).push(r); });
+  let opts = "";
+  Object.entries(bySite).forEach(([sid,rs])=>{
+    opts += `<optgroup label="${esc(rs[0].site)} · ${esc(sid)}">`
+      + rs.map(r=>`<option value="${esc(r.rack_id)}" ${r.rack_id===selectedRack?"selected":""}>${esc(r.rack_id)}</option>`).join("")
+      + `</optgroup>`;
+  });
+  el.innerHTML = `<div class="rackbar"><span class="hint">Rack instance:</span>`
+    + `<select>${opts}</select>`
+    + `<span class="hint" id="${elId}-meta"></span></div>`;
+  const sel = el.querySelector("select");
+  sel.addEventListener("change",()=>{
+    selectedRack = sel.value; selectedTray = null; selectedDpu = null;
+    loadSection(activeSection);
+  });
+}
+
+// ── SITE CONTROLLERS ──────────────────────────────────────────────────
+function fleetHTML(fleet){
+  const f = fleet||{};
+  const boxes = [
+    ["Racks", f.racks, false], ["Hosts", f.trays, false],
+    ["GPU", f.gpus, true], ["DPU", f.dpus, false],
+    ["Tenants", (f.tenants||[]).length, false],
+  ];
+  const grid = `<div class="fleet">` + boxes.map(([k,v,g])=>
+    `<div class="fx"><div class="k">${esc(k)}</div><div class="v ${g?'green':''}">${esc(v==null?'—':v)}</div></div>`
+  ).join("") + `</div>`;
+  const lc = Object.entries(f.hosts_by_lifecycle||{}).map(([k,v])=>
+    `<span class="suchip"><b>${esc(v)}</b> ${esc(k)}</span>`).join("");
+  const pw = f.power||{};
+  const pwChips = `<span class="suchip on"><b>${esc(pw.On||0)}</b> power on</span>`
+    + (pw.PoweringOn ? `<span class="suchip"><b>${esc(pw.PoweringOn)}</b> powering</span>` : "")
+    + `<span class="suchip off"><b>${esc(pw.Off||0)}</b> off</span>`;
+  const dpuChips = (f.dpu_degraded||f.dpu_warning)
+    ? `<span class="suchip" style="color:var(--red);border-color:#4a2530"><b>${esc(f.dpu_degraded||0)}</b> dpu degraded</span>`
+      + `<span class="suchip" style="color:var(--amber);border-color:#4a4020"><b>${esc(f.dpu_warning||0)}</b> dpu warn</span>`
+    : "";
+  return grid + `<div class="breakdown">${lc}${pwChips}${dpuChips}</div>`;
+}
+
+function svcGridHTML(services){
+  const svc = services||[];
+  return `<div class="svc-grid">` + svc.map(s=>
+    `<div class="svc"><span class="dot ${statusDot(s.status)} sd" title="${esc(s.status)}"></span>`
+    + `<div><div class="sname">${esc(s.name)}</div>`
+    + `<div class="scomp">${esc(s.component)}</div>`
+    + `<div class="sdetail">${esc(s.detail)}</div></div></div>`
+  ).join("") + `</div>`;
+}
+
+function instanceCardHTML(s){
+  const f = s.fleet||{};
+  const sus = (f.sus||[]);
+  const suChips = sus.map(su=>`<span class="suchip">${esc(su)}</span>`).join("");
+  const okCls = statusDot(s.status==="healthy"?"ok":s.status==="degraded"?"warning":"critical");
+  return `<div class="inst ${esc(s.status)}">
+    <div class="ihead">
+      <div>
+        <div class="iid"><span class="dot ${siteDot(s.status)}"></span>${esc(s.nico_instance)}</div>
+        <div class="isite">${esc(s.site)} <span class="rgn">· ${esc(s.region)}</span></div>
+      </div>
+      <div class="ista">
+        <div><span class="v">${esc(s.status)}</span></div>
+        <div>v${esc(s.version)}</div>
+        <div>${esc(s.service_ok)}/${esc(s.service_total)} svc</div>
+      </div>
+    </div>
+    <div class="iha">
+      <div>HA: <b>${esc(s.ha_nodes)} nodes</b> · leader <b>${esc(s.leader)}</b></div>
+      <div>deploy: ${esc(s.deployment)}</div>
+    </div>
+
+    <h3>Managed Fleet <span class="r">${esc(f.racks)} racks · ${esc(f.trays)} hosts</span></h3>
+    ${fleetHTML(f)}
+
+    <h3>Scalable Units <span class="r">${esc(sus.length)} SU</span></h3>
+    <div class="breakdown">${suChips || '<span class="hint">none</span>'}</div>
+
+    <h3>Service Inventory <span class="r">${esc((s.services||[]).length)} services</span></h3>
+    ${svcGridHTML(s.services)}
+
+    <div style="margin-top:14px">
+      <button class="ghost sm" data-site="${esc(s.site_id)}">
+        ${openSite===s.site_id ? "Hide site detail ▲" : "View site detail →"}
+      </button>
+    </div>
+  </div>`;
+}
+
+async function loadSites(){
   try{
-    const list = await loadTrays();
-    $("rack-count").textContent = list.length;
-    $("rack").innerHTML = list.map(t=>{
-      const oem = (t.Oem&&t.Oem.Nvidia)||{};
-      const ps = t.PowerState, health = (t.Status&&t.Status.Health)||"OK";
-      const lc = oem.LifecycleState||"", stage = oem.BootStage||"";
-      const gpu = (t.ProcessorSummary&&t.ProcessorSummary.Count)||0;
-      const num = shortTray(t.Id).replace(/^ct-/,"");
-      const sel = (t.Id===selectedTray) ? " sel" : "";
-      return `<div class="tray${sel}" data-id="${esc(t.Id)}">
-        <span class="tnum">${esc(num)}</span>
-        <span class="dot ${powerCls(ps)}" title="Power: ${esc(ps)}"></span>
+    const data = await getJSON("/emulator/v1/sites");
+    const sites = data.sites||[];
+    $("sites-count").textContent = sites.length;
+    $("instances").innerHTML = sites.map(instanceCardHTML).join("");
+    $("xnote").innerHTML = data.cross_site_note
+      ? `<b>Cross-site:</b> ${esc(data.cross_site_note)}`
+      : "";
+    document.querySelectorAll("#instances button[data-site]").forEach(b=>{
+      b.addEventListener("click",()=>{
+        const sid = b.getAttribute("data-site");
+        openSite = (openSite===sid) ? null : sid;
+        loadSites();
+      });
+    });
+    if(openSite){ await renderSiteDetail(openSite); }
+    else { $("site-detail").innerHTML = ""; }
+  }catch(e){ $("instances").innerHTML = `<div class="hint">sites unavailable</div>`; }
+  loadEvents();
+}
+
+async function renderSiteDetail(sid){
+  try{
+    const d = await getJSON("/emulator/v1/sites/"+encodeURIComponent(sid));
+    const sus = d.scalable_units||[];
+    const racks = d.racks||[];
+    const stateCount = {ready:0,attention:0,degraded:0};
+    racks.forEach(r=>{ const c = rackStateCls(r); stateCount[c]=(stateCount[c]||0)+1; });
+    const tenantRacks = racks.filter(r=>(r.tenants||[]).length);
+    const suRows = sus.map(su=>
+      `<tr><td>${esc(su.su_id)}</td><td class="num">${esc(su.racks)}</td>`
+      + `<td class="num">${esc(su.gpus)}</td>`
+      + `<td>${(su.tenants||[]).length?esc((su.tenants||[]).join(", ")):"—"}</td></tr>`
+    ).join("") || `<tr><td colspan="4" class="hint">no scalable units</td></tr>`;
+    const evs = d.recent_events||[];
+    const evHTML = evs.length ? evs.map(e=>{
+      const sev = (e.severity||"info");
+      const cls = sev==="critical"?"critical":sev==="warning"?"warning":"ok";
+      const args = (e.args&&e.args.length)?` <span class="args">[${esc(e.args.join(", "))}]</span>`:"";
+      return `<div class="ev"><span class="sev ${cls}">${esc(sev)}</span>`
+        + `<span class="msg">${esc(e.message_id)}${args}</span></div>`;
+    }).join("") : `<div class="hint">no recent events for this site</div>`;
+    $("site-detail").innerHTML = `<div class="site-detail">
+      <div class="ihead" style="margin-bottom:12px">
+        <div class="iid"><span class="dot ${siteDot(d.status)}"></span>${esc(d.nico_instance)} — site detail</div>
+        <button class="ghost sm" data-close="1">Close ▲</button>
+      </div>
+      <div class="breakdown" style="margin-bottom:12px">
+        <span class="suchip on"><b>${esc(stateCount.ready||0)}</b> ready</span>
+        <span class="suchip"><b>${esc(stateCount.attention||0)}</b> attention</span>
+        <span class="suchip"><b>${esc(stateCount.degraded||0)}</b> degraded</span>
+        <span class="suchip"><b>${esc(tenantRacks.length)}</b> racks w/ tenants</span>
+      </div>
+      <h2 style="margin-bottom:8px">Scalable Unit Roll-up</h2>
+      <div class="tbl-wrap" style="margin-bottom:14px"><table>
+        <tr><th>SU</th><th class="num">Racks</th><th class="num">GPUs</th><th>Tenants</th></tr>
+        ${suRows}
+      </table></div>
+      <h2 style="margin-bottom:8px">Recent Events <span class="count">${evs.length}</span></h2>
+      <div class="events">${evHTML}</div>
+    </div>`;
+    const cb = $("site-detail").querySelector("button[data-close]");
+    if(cb) cb.addEventListener("click",()=>{ openSite=null; loadSites(); });
+  }catch(e){ $("site-detail").innerHTML = `<div class="hint">site detail unavailable</div>`; }
+}
+
+// ── CLUSTER (rack tiles) ──────────────────────────────────────────────
+function rackStateCls(r){
+  const h = r.health||{};
+  if(r.state==="degraded" || (h.critical||0)>0) return "degraded";
+  if(r.state==="attention" || (h.warning||0)>0) return "attention";
+  return "ready";
+}
+
+async function loadCluster(){
+  try{
+    const [c,g,a] = await Promise.all([
+      getJSON("/emulator/v1/cluster"),
+      getJSON("/emulator/v1/cluster/racks?site=gasan"),
+      getJSON("/emulator/v1/cluster/racks?site=ansan"),
+    ]);
+    const cs = [
+      ["Sites", (c.sites||[]).length],
+      ["Racks", c.racks], ["Hosts", c.trays],
+      ["GPU", c.gpus], ["DPU", c.dpus],
+    ];
+    $("cluster-stats").innerHTML = cs.map(([k,v])=>
+      `<div class="stat"><div class="k">${esc(k)}</div><div class="v ${k==='GPU'?'green':''}">${esc(v)}</div></div>`
+    ).join("");
+
+    const groups = [
+      {site_id:"gasan", site:(c.sites&&c.sites[0]&&c.sites[0].site)||"가산", racks:g.racks||[]},
+      {site_id:"ansan", site:(c.sites&&c.sites[1]&&c.sites[1].site)||"안산", racks:a.racks||[]},
+    ];
+    let html = "";
+    groups.forEach(grp=>{
+      const bySu = {};
+      grp.racks.forEach(r=>{ (bySu[r.su_id]=bySu[r.su_id]||[]).push(r); });
+      const suKeys = Object.keys(bySu).sort((x,y)=>{
+        const nx=parseInt(x.split("-").pop(),10), ny=parseInt(y.split("-").pop(),10);
+        return nx-ny;
+      });
+      html += `<div class="sub-sec"><h2>${esc(grp.site)}
+        <span class="count">${esc(grp.racks.length)} racks</span>
+        <span class="hint">— NICo instance nico-${esc(grp.site_id)}</span></h2>`;
+      suKeys.forEach(su=>{
+        const rs = bySu[su];
+        const gpu = rs.reduce((n,r)=>n+(r.gpus||0),0);
+        const tcount = rs.filter(r=>(r.tenants||[]).length).length;
+        html += `<div class="su-block">
+          <div class="suh"><span class="sut">${esc(su)}</span>
+            <span class="sum">${esc(rs.length)} racks · ${esc(gpu)} GPU`
+            + (tcount?` · ${esc(tcount)} w/ tenants`:``) + `</span></div>
+          <div class="rack-tiles">`
+          + rs.map(r=>{
+            const cls = rackStateCls(r);
+            const t = (r.tenants||[]).length;
+            return `<div class="rtile ${cls}" data-rack="${esc(r.rack_id)}"`
+              + ` title="${esc(r.rack_id)} · ${esc(r.state)} · ${esc(t)} tenant(s)">`
+              + (t?`<span class="tdot"></span>`:``)
+              + `<span class="rn">${esc(rackNum(r.rack_id))}</span>`
+              + `<span class="rg">${esc(r.gpus)}g</span></div>`;
+          }).join("")
+          + `</div></div>`;
+      });
+      html += `</div>`;
+    });
+    $("cluster-racks").innerHTML = html;
+    document.querySelectorAll("#cluster-racks .rtile").forEach(el=>{
+      el.addEventListener("click",()=>{
+        selectedRack = el.getAttribute("data-rack");
+        selectedTray = null; selectedDpu = null;
+        switchSection("rack");
+      });
+    });
+  }catch(e){ $("cluster-racks").innerHTML = `<div class="hint">cluster unavailable</div>`; }
+}
+
+// ── RACK (scoped to selectedRack) ─────────────────────────────────────
+async function loadRack(){
+  await buildRackPicker("rack-picker");
+  if(!selectedRack){ $("rack").innerHTML = `<div class="hint">no rack selected</div>`; return; }
+  try{
+    const rk = await getJSON("/emulator/v1/cluster/racks/"+encodeURIComponent(selectedRack));
+    const trays = rk.tray_detail||[];
+    $("rack-count").textContent = trays.length;
+    const meta = $("rack-picker-meta");
+    if(meta){
+      const pw = rk.power||{};
+      meta.textContent = `${rk.su_id} · ${rk.site} · state ${rk.state} · ${pw.On||0}/${rk.trays} on · ${rk.gpus} GPU`;
+    }
+    $("rack").innerHTML = trays.map(t=>{
+      const sel = (t.tray_id===selectedTray) ? " sel" : "";
+      return `<div class="tray${sel}" data-id="${esc(t.tray_id)}">
+        <span class="tnum">${esc(trayNum(t.tray_id))}</span>
+        <span class="dot ${powerCls(t.power_state)}" title="Power: ${esc(t.power_state)}"></span>
         <div class="grow">
-          <div class="tname">${esc(shortTray(t.Id))}</div>
-          <div class="tsub">${esc(shortTray(oem.DpuId||""))} · ${esc(stage)}</div>
+          <div class="tname">${esc(trayShort(t.tray_id))}</div>
+          <div class="tsub">${esc(dpuTail(t.dpu_id||""))} · ${esc(t.boot_stage||"")}</div>
         </div>
-        <span class="tgpu">${esc(gpu)}×GPU</span>
-        <span class="badge ${lcCls(lc)}">${esc(lc)}</span>
-        <span class="dot ${healthCls(health)}" title="Health: ${esc(health)}"></span>
+        <span class="tgpu">${esc(t.gpus)}×GPU</span>
+        <span class="badge ${lcCls(t.lifecycle_state)}">${esc(t.lifecycle_state)}</span>
+        <span class="dot ${healthCls(t.health)}" title="Health: ${esc(t.health)}"></span>
       </div>`;
     }).join("");
     document.querySelectorAll("#rack .tray").forEach(el=>{
-      el.addEventListener("click",()=>{ selectedTray = el.getAttribute("data-id");
-        loadRack(); });
+      el.addEventListener("click", async ()=>{
+        selectedTray = el.getAttribute("data-id");
+        try{
+          const t = await getJSON("/redfish/v1/Systems/"+encodeURIComponent(selectedTray));
+          window.__trayById[selectedTray] = t;
+        }catch(e){}
+        loadRack();
+      });
     });
     renderRackDetail();
   }catch(e){ $("rack").innerHTML = `<div class="hint">rack unavailable</div>`; }
@@ -397,18 +748,17 @@ function renderRackDetail(){
     ).join("")}</div>
     <div style="margin-top:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <span class="hint">Enforcing DPU:</span>
-      <button class="sm" id="rack-to-dpu" data-dpu="${esc(oem.DpuId||"")}">View DPU ${esc(shortTray(oem.DpuId||""))} →</button>
+      <button class="sm" id="rack-to-dpu" data-dpu="${esc(oem.DpuId||"")}">View DPU ${esc(dpuTail(oem.DpuId||""))} →</button>
     </div>
   </div>`;
   const b = $("rack-to-dpu");
   if(b) b.addEventListener("click",()=>{
     selectedDpu = b.getAttribute("data-dpu");
     switchSection("dpus");
-    loadDpus(); loadDpuDetail();
   });
 }
 
-// ── FABRIC view ───────────────────────────────────────────────────────
+// ── FABRIC ────────────────────────────────────────────────────────────
 async function loadFabric(){
   try{
     const [sum, nvl, ib, eth, sw] = await Promise.all([
@@ -483,11 +833,15 @@ async function loadFabric(){
   }catch(e){ $("fabric-summary").innerHTML = `<div class="hint">fabric unavailable</div>`; }
 }
 
-// ── DPU grid + drill-down ─────────────────────────────────────────────
+// ── DPUs (scoped to selectedRack) ─────────────────────────────────────
 async function loadDpus(){
+  await buildRackPicker("dpu-picker");
+  if(!selectedRack){ $("dpus").innerHTML = `<div class="hint">no rack selected</div>`; return; }
   try{
-    const dpus = await getJSON("/emulator/v1/dpus");
+    const dpus = await getJSON("/emulator/v1/dpus?rack="+encodeURIComponent(selectedRack));
     $("dpu-count").textContent = dpus.length;
+    const meta = $("dpu-picker-meta");
+    if(meta) meta.textContent = `${dpus.length} DPU(s) on ${selectedRack}`;
     $("dpus").innerHTML = dpus.map(d=>{
       const health = (d.health||"unknown");
       const tenants = d.tenants||[];
@@ -497,7 +851,7 @@ async function loadDpus(){
       const sel = (d.dpu_id===selectedDpu) ? " sel" : "";
       return `<div class="card dpu${sel}" data-id="${esc(d.dpu_id)}">
         <div class="row">
-          <span class="id">${esc(shortTray(d.dpu_id))}</span>
+          <span class="id">${esc(dpuTail(d.dpu_id))}</span>
           <span class="dot ${esc(healthCls(health))}" title="${esc(health)}"></span>
         </div>
         <div class="meta"><span>mode ${esc(d.operating_mode)}</span>
@@ -527,7 +881,6 @@ async function loadDpuDetail(){
        + ` · mode ${esc(d.operating_mode)} · gen ${esc(d.current_policy_generation)}`
        + ` · LKG ${esc(d.last_known_good_generation)}</span>`;
 
-    // telemetry table
     const keys = ISO_KEYS.filter(k=>k in m).concat(
       Object.keys(m).filter(k=>!ISO_KEYS.includes(k)));
     let tele = `<tr><th>Counter</th><th class="num">Value</th></tr>`;
@@ -537,7 +890,6 @@ async function loadDpuDetail(){
       return `<tr><td>${esc(k)}</td><td class="num ${hot?'hot':''}">${esc(v)}</td></tr>`;
     }).join("");
 
-    // functions table
     const fns = ports.functions||[];
     let ftbl = `<tr><th>Function</th><th>Type</th><th>Tenant</th><th>Oper State</th>`
       + `<th>Link</th><th>MAC</th></tr>`
@@ -547,7 +899,6 @@ async function loadDpuDetail(){
         + `<td>${esc(f.link_state)}</td><td>${esc(f.mac_address||"—")}</td></tr>`).join("")
         : `<tr><td colspan="6" class="hint">no functions</td></tr>`);
 
-    // representors table
     const reps = ports.representors||[];
     let rtbl = `<tr><th>Representor</th><th>Netdev</th><th>Switch</th>`
       + `<th class="num">Port</th><th>Admin</th><th>Oper</th></tr>`
@@ -557,7 +908,6 @@ async function loadDpuDetail(){
         + `<td>${esc(r.admin_state)}</td><td>${esc(r.operational_state)}</td></tr>`).join("")
         : `<tr><td colspan="6" class="hint">no representors</td></tr>`);
 
-    // failure policy
     const fp = d.failure_policy||{};
     const fpRows = Object.entries(fp).map(([k,v])=>
       `<div class="kvi"><span class="kk">${esc(k)}</span><span class="vv">${esc(v)}</span></div>`
@@ -593,7 +943,7 @@ async function loadDpuDetail(){
   }catch(e){ $("dpu-detail").innerHTML = `<div class="hint">DPU detail unavailable</div>`; }
 }
 
-// ── PROVISIONING view ─────────────────────────────────────────────────
+// ── PROVISIONING (scoped to selectedRack) ─────────────────────────────
 function bootIndex(stage){
   if(stage==="HostReady"||stage==="Host Agent Ready") return BOOT_SEQ.length;
   const i = BOOT_SEQ.indexOf(stage);
@@ -614,24 +964,28 @@ function renderPipe(stage){
 
 async function loadProvisioning(){
   if(Object.keys(provBusy).length) return;   // don't clobber an in-flight walk
+  await buildRackPicker("prov-picker");
+  if(!selectedRack){ $("prov-table").innerHTML = `<div class="hint">no rack selected</div>`; return; }
   try{
-    const [leases, list] = await Promise.all([
+    const [leases, rk] = await Promise.all([
       getJSON("/emulator/v1/dhcp/leases"),
-      loadTrays(),
+      getJSON("/emulator/v1/cluster/racks/"+encodeURIComponent(selectedRack)),
     ]);
-    $("prov-count").textContent = list.length;
+    const trays = rk.tray_detail||[];
+    const meta = $("prov-picker-meta");
+    if(meta) meta.textContent = `${trays.length} host(s) on ${selectedRack}`;
+    $("prov-count").textContent = trays.length;
     $("prov-table").innerHTML =
       `<tr><th>Tray</th><th>Power</th><th>Lifecycle</th><th>Boot Progress</th><th>Action</th></tr>`
-      + list.map(t=>{
-        const oem = (t.Oem&&t.Oem.Nvidia)||{};
-        const lc = oem.LifecycleState||"", stage = oem.BootStage||"";
+      + trays.map(t=>{
+        const lc = t.lifecycle_state||"", stage = t.boot_stage||"";
         const provisioning = String(lc).toLowerCase()==="provisioning";
         const act = provisioning
           ? `<button class="sm" disabled>Provisioning…</button>`
-          : `<button class="sm" data-prov="${esc(t.Id)}">Provision</button>`;
-        return `<tr data-row="${esc(t.Id)}">
-          <td>${esc(shortTray(t.Id))}</td>
-          <td><span class="dot ${powerCls(t.PowerState)}"></span> ${esc(t.PowerState)}</td>
+          : `<button class="sm" data-prov="${esc(t.tray_id)}">Provision</button>`;
+        return `<tr data-row="${esc(t.tray_id)}">
+          <td>${esc(trayShort(t.tray_id))}</td>
+          <td><span class="dot ${powerCls(t.power_state)}"></span> ${esc(t.power_state)}</td>
           <td data-lc><span class="badge ${lcCls(lc)}">${esc(lc)}</span></td>
           <td data-stage>${renderPipe(stage)}</td>
           <td>${act}</td>
@@ -646,7 +1000,7 @@ async function loadProvisioning(){
       `<tr><th>Hostname</th><th>Tray</th><th>IP</th><th>MAC</th><th>Subnet</th>`
       + `<th>Gateway</th><th class="num">Lease(s)</th><th>State</th></tr>`
       + (leases.length ? leases.map(l=>
-        `<tr><td>${esc(l.hostname)}</td><td>${esc(shortTray(l.tray_id))}</td>`
+        `<tr><td>${esc(l.hostname)}</td><td>${esc(trayShort(l.tray_id))}</td>`
         + `<td>${esc(l.ip_address)}</td><td>${esc(l.mac_address)}</td>`
         + `<td>${esc(l.subnet)}</td><td>${esc(l.gateway)}</td>`
         + `<td class="num">${esc(l.lease_s)}</td><td>${esc(l.state)}</td></tr>`).join("")
@@ -734,7 +1088,7 @@ async function runScenario(name, btn){
       + `${r.assertions.filter(a=>a.ok).length}/${r.assertions.length} assertions</span></div>`
       + `<div style="margin-top:8px">${asserts}</div>${delta}`;
     box.classList.add("show");
-    loadDpus(); loadDpuDetail(); loadEvents();
+    loadEvents();
   }catch(e){
     box.innerHTML = `<span class="verdict fail">ERROR</span> <span class="hint">${esc(e.message)}</span>`;
     box.classList.add("show");
@@ -769,7 +1123,8 @@ function switchSection(name){
 }
 
 async function loadSection(s){
-  if(s==="overview") return loadEvents();
+  if(s==="sites") return loadSites();
+  if(s==="cluster") return loadCluster();
   if(s==="rack") return loadRack();
   if(s==="fabric") return loadFabric();
   if(s==="dpus"){ await loadDpus(); return loadDpuDetail(); }
@@ -781,7 +1136,7 @@ async function poll(){
   await Promise.all([loadHealth(), loadTwin()]);
   await loadSection(activeSection);
   $("footer").textContent = "last updated " + new Date().toLocaleTimeString()
-    + " · section: " + activeSection + " · polling every 4s · NICo Emulator";
+    + " · section: " + activeSection + " · polling every 4s · NICo Emulator — site-local control plane";
 }
 
 document.querySelectorAll("nav.tabs button").forEach(b=>{
