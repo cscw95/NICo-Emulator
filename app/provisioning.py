@@ -108,15 +108,32 @@ def release_lease(tray_id: str):
 @router.post("/provision/{tray_id}")
 def provision(tray_id: str):
     """Start provisioning a compute tray: allocate a DHCP lease and enter the
-    PXE boot state machine."""
+    PXE boot state machine.
+
+    이미 HostReady까지 도달했던 트레이(Ready/InService)의 재프로비저닝은
+    계획되지 않은 장애로 취급한다: health=warning, critical 이벤트 발행,
+    STORE.faults 에 unresolved 에피소드 기록 (HostReady 재도달 시 resolved)."""
     with STORE.lock:
         tray = _tray(tray_id)
+        prev_lc, prev_stage = tray.lifecycle_state, tray.boot_stage
+        reprovision = (prev_stage in (READY_STAGE, "Host Agent Ready")
+                       and prev_lc in ("Ready", "InService"))
         lease = _make_lease(tray)
         STORE.dhcp_leases[tray_id] = lease
         tray.boot_source = "Pxe"
         tray.boot_enabled = "Continuous"
         tray.boot_stage = BOOT_SEQUENCE[0]          # "PXE Selected"
         tray.lifecycle_state = "Provisioning"
+        if reprovision:
+            tray.health = "warning"
+            detail = (f"unplanned reprovision — {prev_lc}/{prev_stage} "
+                      f"→ Provisioning (IP/OS 재설치)")
+            STORE.faults.append({
+                "tray_id": tray_id, "kind": "reprovision", "detail": detail,
+                "at": _iso(), "resolved": False, "resolved_at": None})
+            STORE.event("critical",
+                        "NeoCloudEmulator.1.0.UnplannedReprovision",
+                        [tray_id, detail])
         STORE.event("info", "NeoCloudEmulator.1.0.ProvisioningStarted",
                     [tray_id, lease["ip_address"]])
         return {
@@ -148,6 +165,18 @@ def provision_step(tray_id: str):
         if complete:
             tray.lifecycle_state = "Ready"
             tray.boot_stage = READY_STAGE
+            # 재프로비저닝 장애 회복: health 복원 + 에피소드 resolved 마감
+            if tray.health == "warning":
+                tray.health = "ok"
+            for f in reversed(STORE.faults):
+                if (f["tray_id"] == tray_id and f["kind"] == "reprovision"
+                        and not f["resolved"]):
+                    f["resolved"] = True
+                    f["resolved_at"] = _iso()
+                    STORE.event("info",
+                                "NeoCloudEmulator.1.0.ReprovisionResolved",
+                                [tray_id])
+                    break
         else:
             tray.boot_stage = new_stage
         STORE.event("info", "NeoCloudEmulator.1.0.BootStageAdvanced",
@@ -258,6 +287,22 @@ def ipxe_script(tray_id: str):
         "initrd ${base-url}/initrd.img\n"
         "boot\n"
     )
+
+
+# ── Faults (재프로비저닝 = 장애) ──────────────────────────────────────
+@router.get("/faults")
+def faults(limit: int = 30):
+    """프로비저닝 계열 장애 이력 — 재프로비저닝 에피소드 최근순.
+
+    recent: [{tray_id, kind:"reprovision", detail, at, resolved, resolved_at}]
+    진행 중(=HostReady 재도달 전)은 resolved=false."""
+    with STORE.lock:
+        items = list(STORE.faults)
+        return {
+            "count": len(items),
+            "open": sum(1 for f in items if not f["resolved"]),
+            "recent": items[-max(1, min(limit, 200)):][::-1],
+        }
 
 
 # ── DNS ───────────────────────────────────────────────────────────────

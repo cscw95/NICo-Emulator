@@ -156,6 +156,9 @@ class Store:
         self.policy_txns: Dict[str, dict] = {}
         self.dhcp_leases: Dict[str, dict] = {}
         self.events = deque(maxlen=1000)
+        # 프로비저닝 계열 장애 이력 — 재프로비저닝(=장애) 에피소드 등
+        # [{tray_id, kind, detail, at, resolved, resolved_at}]
+        self.faults = deque(maxlen=200)
         self._ids = itertools.count(1)
         self.seed()
 
@@ -207,6 +210,18 @@ class Store:
             self.event("info", "NeoCloudEmulator.1.0.ClusterSeeded",
                        [str(n_racks), str(len(self.trays)),
                         str(len(self.trays) * GPU_PER_TRAY)])
+            self._seed_sample_faults()
+
+    def _seed_sample_faults(self):
+        """리셋/시드 직후 장애 이력 메뉴가 비지 않도록 샘플 1건 시드."""
+        self.faults.clear()
+        first = next(iter(self.trays), None)
+        if first:
+            self.faults.append({
+                "tray_id": first, "kind": "reprovision",
+                "detail": "unplanned reprovision — Ready/HostReady 트레이 "
+                          "재프로비저닝 후 HostReady 복귀 (sample)",
+                "at": _iso(), "resolved": True, "resolved_at": _iso()})
 
     # ── cluster aggregation (light — no per-tray heavy data) ──────────
     def rack_summary(self, rack: Rack) -> dict:
