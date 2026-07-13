@@ -1,4 +1,4 @@
-# NICo Emulator — Vera Rubin NVL72 Digital Twin
+# DSX OS NICo Emulator — Vera Rubin NVL72 Digital Twin
 
 Standalone emulator of the **NVIDIA Infra Controller (NICo)** control-plane surface
 and a **Vera Rubin NVL72 rack digital twin**, with DPU-enforced tenant isolation.
