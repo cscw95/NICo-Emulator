@@ -16,7 +16,13 @@ Assumption (SMCI DLC 토폴로지):
 materialize 하고(전 GPU 매 요청 재계산 금지) 요청은 캐시를 필터/페이지한다.
 GPU↔DLC 결합: CDU 장애 주입 → flow_factor 저하 → 담당 랙 GPU 온도가 tick마다
 점진 상승 → 85°C 초과 thermal throttle / 90°C+ XID → alerts/correlate 반영.
-recover 시 tick마다 점진 정상화."""
+recover 시 tick마다 점진 정상화.
+
+Rack control plane (운영 콘솔 계약):
+  POST /racks/{rack_id}/control, POST /racks/control(일괄) —
+  power_on/power_off/restart/power_cap/power_uncap/workload/cordon/uncordon.
+  제어 상태는 ObsEngine.rack_ctrl에 유지(리셋 시 초기화)되고 tick 캐시
+  (DCGM/racks/summary/SLO/alerts)에 즉시 반영된다."""
 import itertools
 import random
 import time
@@ -42,6 +48,17 @@ CDU_RATED_KW = 1600.0             # SMCI in-row DLC-2 정격 (Assumption)
 HEAT_CAPTURE = 0.97               # IT 전력 중 액체로 회수되는 열 비율
 THROTTLE_TEMP_C = 85.0
 XID_TEMP_C = 90.0
+
+# rack control plane
+CTRL_ACTIONS = ("power_on", "power_off", "restart", "power_cap", "power_uncap",
+                "workload", "cordon", "uncordon")
+PROFILE_UTIL = {"idle": 2.0, "steady": 52.0, "train": 77.0, "burst": 92.0}
+RESTART_TICKS = 2                 # restart 후 부트에 걸리는 tick 수
+
+
+def _default_ctrl() -> dict:
+    return {"power": "on", "restart_ticks": 0, "cap_kw": None,
+            "profile": None, "cordoned": False, "reason": ""}
 SLO_TARGET_PCT = 99.5
 ERROR_BUDGET_MIN = 43200 * (100 - SLO_TARGET_PCT) / 100.0   # 30일 = 216분
 
@@ -117,6 +134,7 @@ class ObsEngine:
         self.rack_hist: Dict[str, deque] = {}
         self.site_names: Dict[str, str] = {}
         self.alerts: Dict[tuple, dict] = {}
+        self.rack_ctrl: Dict[str, dict] = {}    # rack_id → 제어 상태
         self._alert_seq = itertools.count(1)
         self._faulted_prev: Set[str] = set()
         self.tenant_acc: Dict[str, dict] = {}
@@ -139,6 +157,7 @@ class ObsEngine:
         self.walks, self.cdus, self.rack_cdu = {}, {}, {}
         self.rack_hist, self.site_names = {}, {}
         self.alerts, self.tenant_acc = {}, {}
+        self.rack_ctrl = {}
         self._faulted_prev = set()
         self.tick_no, self.last = 0, 0.0
         for r in STORE.racks.values():
@@ -187,6 +206,18 @@ class ObsEngine:
             for w in self.walks.values():
                 w["util"] = _clamp(w["util"] + random.uniform(-4, 4), 62.0, 92.0)
                 w["temp"] = _clamp(w["temp"] + random.uniform(-1.2, 1.2), 58.0, 70.0)
+
+            # 1b) rack 제어 — restart 부트 진행
+            for rid, ctl in self.rack_ctrl.items():
+                if ctl["power"] == "restart":
+                    ctl["restart_ticks"] -= 1
+                    if ctl["restart_ticks"] <= 0:
+                        ctl["power"] = "on"
+                        rack = STORE.racks.get(rid)
+                        if rack:
+                            for tid in rack.trays:
+                                STORE.set_power(STORE.trays[tid], "On")
+                                STORE.trays[tid].lifecycle_state = "Ready"
 
             # 2) CDU 장애/복구 다이내믹스 (tick마다 점진 변화)
             for c in self.cdus.values():
@@ -242,16 +273,31 @@ class ObsEngine:
                 offset = c.temp_offset + c.rack_extra.get(rack.rack_id, 0.0)
                 power_sum, thr, flt, alloc = 0.0, 0, 0, 0
                 rack_tenants = set()
+                ctl = self.rack_ctrl.get(rack.rack_id) or _default_ctrl()
+                rack_off = ctl["power"] in ("off", "restart")
+                cordoned = ctl["cordoned"]
+                profile = ctl["profile"]
+                n_gpu = len(rack.trays) * GPU_PER_TRAY
+                cap_w = (ctl["cap_kw"] * 1000.0 / n_gpu) if ctl["cap_kw"] else None
                 for tid in rack.trays:
                     tray = STORE.trays[tid]
                     tenant = tray_tenant.get(tid)
-                    tray_bad = tray.health == "critical"
+                    tray_bad = tray.health == "critical" and not rack_off
+                    # 부하 대상: 테넌트 할당 또는 워크로드 프로필 지정(데모 부하)
+                    loaded = ((tenant is not None or
+                               profile in ("steady", "train", "burst"))
+                              and not rack_off and not cordoned
+                              and profile != "idle")
+                    ubase = PROFILE_UTIL.get(profile, w["util"]) \
+                        if profile else w["util"]
                     for gi in range(GPU_PER_TRAY):
                         uuid = f"GPU-{tid}-g{gi}"
                         h = _crc(uuid)
                         r = random.Random((h * 1000003) ^ (tick * 2654435761))
-                        if tenant:
-                            util = _clamp(w["util"] + r.uniform(-12, 10), 40.0, 99.0)
+                        if rack_off:
+                            util, temp, mem, nvl = 0.0, 26.0 + r.uniform(-1, 1), 0.0, 0.0
+                        elif loaded:
+                            util = _clamp(ubase + r.uniform(-12, 10), 1.0, 99.0)
                             temp = w["temp"] + offset + r.uniform(-5, 5)
                             mem = GPU_MEM_GB * (0.30 + util / 100 * 0.60)
                             nvl = max(0.0, util * 58 + r.uniform(-150, 150))
@@ -260,27 +306,37 @@ class ObsEngine:
                             temp = 34.0 + offset * 0.4 + r.uniform(-2, 2)
                             mem = r.uniform(2, 6)
                             nvl = r.uniform(0, 3)
-                        throttled = bool(tenant) and temp >= THROTTLE_TEMP_C
-                        gpu_xid = bool(tenant) and temp >= XID_TEMP_C and h % 25 == 0
+                        throttled = loaded and temp >= THROTTLE_TEMP_C
+                        gpu_xid = loaded and temp >= XID_TEMP_C and h % 25 == 0
                         faulted = tray_bad or gpu_xid
                         xids = [79] if tray_bad else ([63] if gpu_xid else [])
-                        if throttled:
+                        if rack_off:
+                            power, clock = 0.0, 0.0
+                        elif throttled:
                             power = min(GPU_POWER_LIMIT_W,
                                         0.72 * GPU_POWER_LIMIT_W + r.uniform(-40, 40))
                             clock = 1650 + r.uniform(-80, 80)
-                        elif tenant:
+                        elif loaded:
                             power = (GPU_IDLE_POWER_W + util / 100
                                      * (GPU_POWER_LIMIT_W - GPU_IDLE_POWER_W))
                             clock = 2300 + util * 3
                         else:
                             power = max(60.0, GPU_IDLE_POWER_W + r.uniform(-15, 15))
                             clock = 1350.0
+                        capped = bool(cap_w) and not rack_off and power > cap_w
+                        if capped:                       # rack power cap 반영
+                            scale = cap_w / power
+                            power = cap_w
+                            util = round(util * max(0.35, scale), 1)
+                            clock = min(clock, 1900.0)
                         temp = min(temp, 97.0)
                         state = ("faulted" if faulted else
                                  "throttled" if throttled else
-                                 "active" if tenant else "idle")
+                                 "active" if loaded else "idle")
                         health = ("critical" if faulted else
                                   "warning" if throttled else "ok")
+                        reasons = (["thermal"] if throttled else []) \
+                            + (["power_cap"] if capped else [])
                         rec = {
                             "gpu_uuid": uuid, "idx": gi, "tray_id": tid,
                             "rack_id": rack.rack_id, "su_id": rack.su_id,
@@ -290,9 +346,10 @@ class ObsEngine:
                             "mem_used_gb": round(mem, 1), "mem_total_gb": GPU_MEM_GB,
                             "temp_c": round(temp, 1), "mem_temp_c": round(temp + 8, 1),
                             "power_w": round(power),
-                            "power_limit_w": round(GPU_POWER_LIMIT_W),
+                            "power_limit_w": round(cap_w if cap_w else
+                                                   GPU_POWER_LIMIT_W),
                             "sm_clock_mhz": round(clock),
-                            "throttle_reasons": ["thermal"] if throttled else [],
+                            "throttle_reasons": reasons,
                             "ecc_corr": h % 5 + tick // 40,
                             "ecc_uncorr": 1 if gpu_xid else 0,
                             "xid_recent": xids,
@@ -321,17 +378,18 @@ class ObsEngine:
                             t["contracted"] += 1
                             if throttled:
                                 t["throttled"] += 1
-                            if throttled or faulted:
+                            if throttled or faulted or rack_off or cordoned:
                                 t["unavail"] += 1
-                                if offset > 3.0:
+                                if offset > 3.0 and not (rack_off or cordoned):
                                     t["cooling_unavail"] += 1
                 gpu_kw = power_sum / 1000.0
                 rack_agg[rack.rack_id] = {
                     "rack_id": rack.rack_id, "su_id": rack.su_id,
                     "site": rack.site_id, "gpu_kw": gpu_kw,
-                    "it_kw": gpu_kw + RACK_OVERHEAD_KW,
+                    "it_kw": 0.3 if rack_off else gpu_kw + RACK_OVERHEAD_KW,
                     "thr": thr, "flt": flt, "alloc": alloc,
                     "tenants": rack_tenants, "offset": offset,
+                    "ctl": ctl, "off": rack_off,
                 }
 
             # 5) CDU derived values — 물리 정합 (rack heat ≈ CDU measured_heat)
@@ -359,6 +417,7 @@ class ObsEngine:
                 rdt = 0.0 if closed else min(
                     25.0, agg["it_kw"] * HEAT_CAPTURE * 14.34 / max(1.0, bflow))
                 inlet = c.d["supply2"] + 0.7
+                ctl = agg["ctl"]
                 rack_views.append({
                     "rack_id": rid, "su_id": agg["su_id"], "site": agg["site"],
                     "it_power_kw": round(agg["it_kw"], 1),
@@ -370,6 +429,11 @@ class ObsEngine:
                         CDU_RATED_KW / len(c.rack_ids)
                         - agg["it_kw"] * HEAT_CAPTURE, 1),
                     "throttled_gpus": agg["thr"],
+                    "power_state": ("off" if ctl["power"] == "off" else
+                                    "mixed" if ctl["power"] == "restart" else "on"),
+                    "power_cap_kw": ctl["cap_kw"],
+                    "workload_profile": ctl["profile"] or "steady",
+                    "cordoned": ctl["cordoned"],
                     "health": ("critical" if agg["flt"] or closed else
                                "warning" if agg["thr"] else "ok"),
                 })
@@ -383,6 +447,23 @@ class ObsEngine:
                                f"(cdu={self.rack_cdu[rid]}, +{agg['offset']:.1f}°C)")
                 else:
                     self._resolve(key)
+            # 7b) rack 제어 알림 — 전원 차단(테넌트 영향 major)·cordon
+            for rid, agg in rack_agg.items():
+                ctl, koff, kcord = agg["ctl"], ("ctl-off", rid), ("ctl-cordon", rid)
+                if agg["off"]:
+                    sev = "major" if agg["tenants"] else "warning"
+                    self._fire(koff, "gpu", sev, rid,
+                               f"RACK_POWERED_OFF: {rid} 전원 차단"
+                               + (f" — tenant {'/'.join(sorted(agg['tenants']))} 영향"
+                                  if agg["tenants"] else " (미할당)"))
+                else:
+                    self._resolve(koff)
+                if ctl["cordoned"]:
+                    self._fire(kcord, "gpu", "warning", rid,
+                               f"RACK_CORDONED: {rid} 신규 부하 차단"
+                               + (f" — {ctl['reason']}" if ctl["reason"] else ""))
+                else:
+                    self._resolve(kcord)
             for uuid in faulted_now:
                 self._fire(("gpu-xid", uuid), "gpu", "critical", uuid,
                            f"XID 63 (thermal) on {uuid}")
@@ -593,6 +674,11 @@ def summary():
                 "headroom_kw": round(sum(c.d["headroom"] for c in cdus), 1),
             },
             "racks": len(STORE.racks),
+            "racks_off": sum(1 for a in ENGINE._rack_agg.values() if a["off"]),
+            "racks_cordoned": sum(1 for a in ENGINE._rack_agg.values()
+                                  if a["ctl"]["cordoned"]),
+            "racks_capped": sum(1 for a in ENGINE._rack_agg.values()
+                                if a["ctl"]["cap_kw"]),
             "tenants": len(ENGINE._tenants),
             "alerts_open": ENGINE.open_alert_count(),
             "slo": {"gpu_availability_pct": round(avail_pct, 3)},
@@ -644,6 +730,118 @@ def racks(site: Optional[str] = None, su: Optional[str] = None):
         if su:
             rs = [r for r in rs if r["su_id"] == su]
         return rs
+
+
+# ── 4b) rack control plane ────────────────────────────────────────────
+class RackControlBody(BaseModel):
+    action: str
+    params: dict = {}
+
+
+class BulkScope(BaseModel):
+    all: bool = False
+    site: Optional[str] = None
+    su: Optional[str] = None
+    rack_ids: Optional[List[str]] = None
+
+
+class BulkControlBody(BaseModel):
+    scope: BulkScope
+    action: str
+    params: dict = {}
+
+
+def _ctrl_state(ctl: dict) -> dict:
+    return {"power_state": ("off" if ctl["power"] == "off" else
+                            "mixed" if ctl["power"] == "restart" else "on"),
+            "power_cap_kw": ctl["cap_kw"],
+            "workload_profile": ctl["profile"] or "steady",
+            "cordoned": ctl["cordoned"]}
+
+
+def _apply_rack_control(rack_id: str, action: str, params: dict) -> dict:
+    """단일 랙에 제어 적용 (STORE.lock 보유 상태에서 호출)."""
+    ENGINE._ensure_topology()      # reseed 직후라면 먼저 재구축(제어 유실 방지)
+    rack = STORE.racks.get(rack_id)
+    if not rack:
+        raise HTTPException(404, f"rack {rack_id} not found")
+    if action not in CTRL_ACTIONS:
+        raise HTTPException(422, f"unknown action '{action}' "
+                                 f"(supported: {', '.join(CTRL_ACTIONS)})")
+    ctl = ENGINE.rack_ctrl.setdefault(rack_id, _default_ctrl())
+    if action == "power_off":
+        ctl["power"] = "off"
+        for tid in rack.trays:
+            STORE.set_power(STORE.trays[tid], "ForceOff")
+    elif action == "power_on":
+        ctl["power"] = "on"
+        for tid in rack.trays:
+            STORE.set_power(STORE.trays[tid], "On")
+    elif action == "restart":
+        ctl["power"], ctl["restart_ticks"] = "restart", RESTART_TICKS
+        for tid in rack.trays:
+            STORE.set_power(STORE.trays[tid], "ForceRestart")
+            STORE.trays[tid].lifecycle_state = "Provisioning"
+    elif action == "power_cap":
+        cap = params.get("cap_kw")
+        if cap is None and params.get("cap_pct") is not None:
+            n_gpu = len(rack.trays) * GPU_PER_TRAY
+            cap = (n_gpu * GPU_POWER_LIMIT_W / 1000.0 + RACK_OVERHEAD_KW) \
+                * float(params["cap_pct"]) / 100.0
+        if not cap or float(cap) <= 0:
+            raise HTTPException(422, "power_cap requires cap_kw or cap_pct > 0")
+        ctl["cap_kw"] = round(float(cap), 1)
+    elif action == "power_uncap":
+        ctl["cap_kw"] = None
+    elif action == "workload":
+        profile = params.get("profile")
+        if profile not in PROFILE_UTIL:
+            raise HTTPException(422, f"workload requires profile in "
+                                     f"{sorted(PROFILE_UTIL)}")
+        ctl["profile"] = profile
+    elif action == "cordon":
+        ctl["cordoned"], ctl["reason"] = True, params.get("reason", "")
+    elif action == "uncordon":
+        ctl["cordoned"], ctl["reason"] = False, ""
+    STORE.event("info", "NeoCloudEmulator.1.0.RackControl",
+                [rack_id, action, str(params or {})])
+    return _ctrl_state(ctl)
+
+
+@router.post("/racks/{rack_id}/control")
+def rack_control(rack_id: str, body: RackControlBody):
+    with STORE.lock:
+        state = _apply_rack_control(rack_id, body.action, body.params)
+    ENGINE.tick(force=True)                      # 즉시 텔레메트리 수렴
+    return {"rack_id": rack_id, "action": body.action,
+            "applied": True, "state": state}
+
+
+@router.post("/racks/control")
+def racks_control(body: BulkControlBody):
+    """전체/사이트/SU/랙 목록 범위 일괄 제어."""
+    sc = body.scope
+    with STORE.lock:
+        if sc.rack_ids:
+            targets = list(sc.rack_ids)
+        else:
+            targets = [r.rack_id for r in STORE.racks.values()
+                       if (sc.all or sc.site or sc.su)
+                       and (not sc.site or _site_match(
+                           r.site_id, sc.site, ENGINE.site_names))
+                       and (not sc.su or r.su_id == sc.su)]
+        if not targets:
+            raise HTTPException(422, "empty scope — set all/site/su/rack_ids")
+        applied, failed = 0, []
+        for rid in targets:
+            try:
+                _apply_rack_control(rid, body.action, body.params)
+                applied += 1
+            except HTTPException as e:
+                failed.append({"rack_id": rid, "error": str(e.detail)})
+    ENGINE.tick(force=True)
+    return {"matched": len(targets), "applied": applied, "failed": failed,
+            "summary": f"{body.action} → {applied}/{len(targets)} racks"}
 
 
 # ── 5-7) SMCI DLC plane ───────────────────────────────────────────────
