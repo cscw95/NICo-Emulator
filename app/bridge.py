@@ -187,6 +187,23 @@ def release(instance_id: str):
         for h in _hosts.values():
             if h.get("instance_id") == instance_id:
                 h["instance_id"] = None; h["state"] = "released"
+                # allocate()의 역방향: DPU 테넌트 격리 해제 + 트레이 원복
+                tenant = h.pop("tenant_id", None)
+                did = h.get("_dpu")
+                d = STORE.dpus.get(did) if did else None
+                if d and tenant:
+                    for aid, a in [(k, v) for k, v in STORE.attachments.items()
+                                   if v["dpu_id"] == did
+                                   and v["tenant_id"] == tenant]:
+                        STORE.attachments.pop(aid, None)
+                        d.functions.pop(a["function_id"], None)
+                        d.representors.pop(a["representor_id"], None)
+                        STORE.security_policies.pop(
+                            a["security_policy_id"], None)
+                tray = _tray_for(h["host_id"])
+                if tray:
+                    tray.lifecycle_state = "Ready"
+                    tray.boot_stage = "Idle"
                 return _mkjob("release", h["host_id"], "succeeded")
         raise HTTPException(404, f"instance {instance_id} not found")
 
