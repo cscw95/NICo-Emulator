@@ -380,6 +380,16 @@
       <h2>Switch Inventory <span class="count" id="sw-count">0</span></h2>
       <div class="tbl-wrap"><table id="sw-table"></table></div>
     </div>
+    <div class="sub-sec">
+      <h2>UFM — InfiniBand <span class="count" id="ufm-count">0</span>
+        <span class="hint" id="ufm-health">— Quantum-X800 개별 스위치 · UFM Enterprise 에뮬레이션</span></h2>
+      <div class="tbl-wrap"><table id="ufm-table"></table></div>
+    </div>
+    <div class="sub-sec">
+      <h2>NetQ — Ethernet <span class="count" id="netq-count">0</span>
+        <span class="hint" id="netq-val">— Spectrum-X SN5600 · NetQ validation</span></h2>
+      <div class="tbl-wrap"><table id="netq-table"></table></div>
+    </div>
   </section>
 
   <!-- DPUs -->
@@ -940,6 +950,50 @@ async function loadFabric(){
         + `<td class="num">${esc(s.ports)}</td><td>${esc(s.state)}</td>`
         + `<td>${esc(s.link_state)}</td></tr>`).join("");
   }catch(e){ $("fabric-summary").innerHTML = `<div class="hint">fabric unavailable</div>`; }
+  loadUfmNetq().catch(()=>{});
+}
+
+// ── UFM(IB)·NetQ(Ethernet) 개별 스위치 에뮬레이터 ─────────────────────
+async function loadUfmNetq(){
+  const stCls = s => s==="ok"||s==="up" ? "ready"
+    : s==="degraded"||s==="warn" ? "warn" : "crit";
+  const [uSys, uHealth, nSw, nVal] = await Promise.all([
+    getJSON("/ufm/v1/resources/systems"),
+    getJSON("/ufm/v1/fabric/health"),
+    getJSON("/netq/v1/switches"),
+    getJSON("/netq/v1/validation"),
+  ]);
+  const systems = uSys.systems||[];
+  $("ufm-count").textContent = systems.length;
+  $("ufm-health").innerHTML = `— 링크 ${esc(uHealth.links_active)}/${esc(uHealth.links_total)} active`
+    + ` · degraded <b style="color:${uHealth.links_degraded? "var(--amber)":"inherit"}">${esc(uHealth.links_degraded)}</b>`
+    + ` · down <b style="color:${uHealth.links_down? "#ff6b6b":"inherit"}">${esc(uHealth.links_down)}</b>`
+    + ` · flaps(24h) ${esc(uHealth.flaps_24h)} · score ${esc(uHealth.score)}`;
+  $("ufm-table").innerHTML =
+    `<tr><th>Switch</th><th>Type</th><th>Plane</th><th>Site / SU</th><th>Model · FW</th>`
+    + `<th class="num">Ports</th><th class="num">Temp</th><th>State</th></tr>`
+    + systems.map(s=>
+      `<tr><td style="font-family:var(--mono)">${esc(s.name)}</td><td>${esc(s.type)}</td>`
+      + `<td>${esc(s.plane)}</td><td>${esc(s.site)}${s.su_id? " · "+esc(s.su_id):""}</td>`
+      + `<td>${esc(s.model)} · ${esc(s.fw)}</td>`
+      + `<td class="num">${esc(s.ports_active)}/${esc(s.ports_total)}</td>`
+      + `<td class="num">${esc(s.temperature_c)}°C</td>`
+      + `<td><span class="badge ${stCls(s.state)}">${esc(s.state)}</span></td></tr>`).join("");
+  const nsw = nSw.switches||[];
+  $("netq-count").textContent = nsw.length;
+  const checks = nVal.checks||[];
+  $("netq-val").innerHTML = "— validation: " + checks.map(c=>
+    `<span class="badge ${c.result==="pass"?"ready":c.result==="warn"?"warn":"crit"}"`
+    + ` title="${esc(c.detail||"")}">${esc(c.check)} ${esc(c.result)}</span>`).join(" ");
+  $("netq-table").innerHTML =
+    `<tr><th>Switch</th><th>Role</th><th>Site / SU</th><th>Model</th>`
+    + `<th class="num">If up</th><th class="num">Temp</th><th>State</th></tr>`
+    + nsw.map(s=>
+      `<tr><td style="font-family:var(--mono)">${esc(s.name)}</td><td>${esc(s.role)}</td>`
+      + `<td>${esc(s.site)}${s.su_id? " · "+esc(s.su_id):""}</td><td>${esc(s.model)}</td>`
+      + `<td class="num">${esc(s.interfaces_up)}/${esc(s.interfaces_total)}</td>`
+      + `<td class="num">${esc(s.temperature_c)}°C</td>`
+      + `<td><span class="badge ${stCls(s.state)}">${esc(s.state)}</span></td></tr>`).join("");
 }
 
 // ── SITE FABRIC SECTIONS + IB 토폴로지 구성 뷰 팝업 (요청 2) ──────────

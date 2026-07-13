@@ -212,8 +212,12 @@ def topology(site: Optional[str] = None):
         sites_out = []
         for meta in CLUSTER:
             sid = meta["id"]
-            if site and site not in (sid, meta["name"]):
-                continue
+            if site:
+                q = site.lower()
+                if not (q in (sid, meta["name"].lower())
+                        or q in sid or sid in q
+                        or q in meta["name"].lower()):
+                    continue
             racks = [STORE.rack_summary(r) for r in STORE.racks.values()
                      if r.site_id == sid]
             sus: dict = {}

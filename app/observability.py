@@ -434,6 +434,8 @@ class ObsEngine:
                     "power_cap_kw": ctl["cap_kw"],
                     "workload_profile": ctl["profile"] or "steady",
                     "cordoned": ctl["cordoned"],
+                    "tenants": sorted(agg["tenants"]),
+                    "allocated_gpus": agg["alloc"],
                     "health": ("critical" if agg["flt"] or closed else
                                "warning" if agg["thr"] else "ok"),
                 })
@@ -626,6 +628,7 @@ class ObsEngine:
                           "severity": "critical", "resource": f["tray_id"],
                           "summary": f"{f['kind']}: {f['detail']}", "at": f["at"],
                           "state": "resolved" if f.get("resolved") else "firing"})
+        items.extend(_fabric_alerts())
         items.sort(key=lambda a: (a["state"] != "firing", a["at"]), reverse=False)
         items.sort(key=lambda a: a["at"], reverse=True)
         items.sort(key=lambda a: a["state"] != "firing")
@@ -635,6 +638,51 @@ class ObsEngine:
         n = sum(1 for a in self.alerts.values() if a["state"] == "firing")
         n += sum(1 for f in STORE.faults if not f.get("resolved"))
         return n
+
+
+def _fabric_alerts() -> List[dict]:
+    """UFM(IB)·NetQ(Ethernet) 상태를 fabric 도메인 알림으로 merge."""
+    out: List[dict] = []
+    try:
+        from . import ufm as _ufm, netq as _netq
+        h = _ufm.fabric_health(site=None)
+        bad = (h.get("links_degraded") or 0) + (h.get("links_down") or 0)
+        if bad:
+            def _pname(p):
+                if isinstance(p, dict):
+                    return p.get("port") or p.get("name") or p.get("link_id") \
+                        or p.get("system") or "port"
+                return str(p)
+            samp = ", ".join(_pname(p)
+                             for p in (h.get("unhealthy_ports") or [])[:2])
+            out.append({
+                "alert_id": "fab-ib", "domain": "fabric",
+                "severity": "major" if h.get("links_down") else "warning",
+                "resource": "ufm",
+                "summary": f"IB 링크 이상 — degraded {h.get('links_degraded', 0)}"
+                           f" · down {h.get('links_down', 0)}"
+                           + (f" ({samp})" if samp else ""),
+                "at": _iso(), "state": "firing"})
+        v = _netq.validation()
+        checks = v.get("checks", v) if isinstance(v, dict) else v
+        fails = [c for c in checks if c.get("result") == "fail"]
+        warns = [c for c in checks if c.get("result") == "warn"]
+        if fails or warns:
+            first = (fails or warns)[0]
+            out.append({
+                "alert_id": "fab-netq", "domain": "fabric",
+                "severity": "major" if fails else "warning",
+                "resource": "netq",
+                "summary": "NetQ validation "
+                           + (f"fail {len(fails)}" if fails else "")
+                           + (" · " if fails and warns else "")
+                           + (f"warn {len(warns)}" if warns else "")
+                           + f" — {first.get('check')}: "
+                           + str(first.get('detail', ''))[:60],
+                "at": _iso(), "state": "firing"})
+    except Exception:
+        pass                                    # fabric 에뮬레이터 미가용 시 무시
+    return out
 
 
 ENGINE = ObsEngine()
@@ -686,10 +734,25 @@ def summary():
 
 
 # ── 2-3) DCGM plane ───────────────────────────────────────────────────
+def _gpu_attn(g: dict) -> bool:
+    """운영 콘솔 '예외만' 판정과 동일한 서버측 기준."""
+    return (g["state"] in ("faulted", "throttled") or g["temp_c"] >= 78.0
+            or g["ecc_uncorr"] > 0 or g["pcie_replay"] >= 3)
+
+
+_GPU_SORT = {
+    "temp": lambda g: -g["temp_c"],
+    "util": lambda g: -g["util_pct"],
+    "power": lambda g: -g["power_w"],
+    "ecc": lambda g: -(g["ecc_uncorr"] * 1000 + g["ecc_corr"]),
+}
+
+
 @router.get("/dcgm/gpus")
 def dcgm_gpus(site: Optional[str] = None, su: Optional[str] = None,
               rack: Optional[str] = None, tenant: Optional[str] = None,
-              state: Optional[str] = None, limit: int = 100, offset: int = 0):
+              state: Optional[str] = None, attn: bool = False,
+              sort: Optional[str] = None, limit: int = 100, offset: int = 0):
     ENGINE.tick()
     with STORE.lock:
         gs = ENGINE._gpus
@@ -703,8 +766,50 @@ def dcgm_gpus(site: Optional[str] = None, su: Optional[str] = None,
             gs = [g for g in gs if g["tenant_id"] == tenant]
         if state:
             gs = [g for g in gs if g["state"] == state]
+        if attn:                               # 예외만 — 전 플릿 기준 필터
+            gs = [g for g in gs if _gpu_attn(g)]
+        if sort in _GPU_SORT:                  # 전 플릿 기준 정렬 후 페이지
+            gs = sorted(gs, key=_GPU_SORT[sort])
         return {"total": len(gs), "offset": offset, "limit": limit,
                 "gpus": gs[offset:offset + limit]}
+
+
+@router.get("/dcgm/su-summary")
+def dcgm_su_summary(site: Optional[str] = None):
+    """SU 단위 집계 + 플릿 히스토그램 — 콘솔 히트맵/분포 라이브 바인딩용."""
+    ENGINE.tick()
+    with STORE.lock:
+        sus: Dict[str, dict] = {}
+        uh = [0] * 10
+        th = [0] * 10
+        for g in ENGINE._gpus:
+            if site and not _site_match(g["site"], site, ENGINE.site_names):
+                continue
+            s = sus.setdefault(g["su_id"], {
+                "su_id": g["su_id"], "site": g["site"], "gpus": 0,
+                "active": 0, "throttled": 0, "faulted": 0,
+                "_util": 0.0, "max_temp_c": 0.0, "ecc_uncorr": 0})
+            s["gpus"] += 1
+            if g["state"] in ("active", "throttled", "faulted"):
+                s["active"] += 1
+            if g["state"] == "throttled":
+                s["throttled"] += 1
+            if g["state"] == "faulted":
+                s["faulted"] += 1
+            s["_util"] += g["util_pct"]
+            s["max_temp_c"] = max(s["max_temp_c"], g["temp_c"])
+            s["ecc_uncorr"] += g["ecc_uncorr"]
+            uh[min(9, int(g["util_pct"] // 10))] += 1
+            th[min(9, max(0, int((g["temp_c"] - 20) // 8)))] += 1
+        out = []
+        for s in sorted(sus.values(), key=lambda x: int(x["su_id"].split("-")[1])):
+            s["avg_util_pct"] = round(s["_util"] / max(1, s["gpus"]), 1)
+            del s["_util"]
+            out.append(s)
+        return {"sus": out,
+                "hist": {"util_buckets": uh, "temp_buckets": th,
+                         "util_edges": "0-100 step10",
+                         "temp_edges": "20-100 step8"}}
 
 
 @router.get("/dcgm/gpus/{gpu_uuid}")
