@@ -174,6 +174,9 @@ class Store:
     # ── VR NVL72 cluster twin ─────────────────────────────────────────
     def seed(self):
         with self.lock:
+            # reseed generation — derived caches (e.g. observability engine)
+            # rebuild their topology when this changes
+            self.seed_gen = getattr(self, "seed_gen", 0) + 1
             self.racks.clear(); self.trays.clear(); self.dpus.clear()
             lim = _rack_limit()
             n_racks = 0
