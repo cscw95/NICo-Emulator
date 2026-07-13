@@ -15,7 +15,7 @@ def _attach(client, dpu, tenant, suffix, mac, vni):
 
 
 def test_inter_tenant_traffic_blocked(client):
-    dpu = "vr-rack-001-ct-01-dpu-0"
+    dpu = "su-1-rack-00-tray-00-dpu-0"
     a = _attach(client, dpu, "tenant-a", "a", "02:aa:00:00:00:01", 5001)
     b = _attach(client, dpu, "tenant-b", "b", "02:bb:00:00:00:01", 5002)
 
@@ -35,7 +35,7 @@ def test_inter_tenant_traffic_blocked(client):
 
 def test_intra_tenant_traffic_forwarded(client):
     """Same-tenant traffic must be forwarded, not dropped."""
-    dpu = "vr-rack-001-ct-04-dpu-0"
+    dpu = "su-1-rack-00-tray-03-dpu-0"
     a = _attach(client, dpu, "tenant-a", "a1", "02:aa:00:00:00:11", 5101)
     b = _attach(client, dpu, "tenant-a", "a2", "02:aa:00:00:00:12", 5102)
     r = client.post(f"/emulator/v1/dpus/{dpu}/traffic", json={
@@ -49,7 +49,7 @@ def test_intra_tenant_traffic_forwarded(client):
 
 
 def test_mac_spoof_dropped(client):
-    dpu = "vr-rack-001-ct-02-dpu-0"
+    dpu = "su-1-rack-00-tray-01-dpu-0"
     a = _attach(client, dpu, "tenant-a", "a", "02:aa:00:00:00:0a", 5003)
     r = client.post(f"/emulator/v1/dpus/{dpu}/traffic", json={
         "source_function": a["function_id"],
@@ -64,7 +64,7 @@ def test_mac_spoof_dropped(client):
 
 
 def test_arm_os_crash_and_recover_restores(client):
-    dpu = "vr-rack-001-ct-03-dpu-0"
+    dpu = "su-1-rack-00-tray-02-dpu-0"
     _attach(client, dpu, "tenant-a", "a", "02:aa:00:00:00:03", 5004)
 
     client.post(f"/emulator/v1/dpus/{dpu}/faults", json={"type": "DPU_ARM_OS_CRASH"})

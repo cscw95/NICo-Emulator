@@ -5,19 +5,33 @@ dpu / dpu_function / dpu_representor / tenant_network / dpu_tenant_attachment /
 dpu_security_policy / dpu_flow_pipe / dpu_flow_entry / dpu_qos_policy /
 dpu_ipsec_sa / dpu_policy_transaction  (+ Redfish BMC + fabric state)."""
 import itertools
+import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from threading import RLock
 from typing import Dict, List, Optional, Any
 
-# ── VR NVL72 constants (NCP RD) ───────────────────────────────────────
-RACK_ID = "vr-rack-001"
-COMPUTE_TRAYS = 18          # NVL72: 18 compute trays × 4 Rubin GPU = 72 GPU
+# ── VR NVL72 rack constants (NCP RD) ──────────────────────────────────
+COMPUTE_TRAYS = 18          # per rack — NVL72: 18 compute trays × 4 Rubin GPU = 72 GPU
 GPU_PER_TRAY = 4
 NVLINK_SWITCH_TRAYS = 9
 POWER_SHELVES = 6
 CDU_COUNT = 1
+
+# ── Cluster topology — mirrors the NeoCloud OS (VRCM) Phase-1 fleet ────
+#   140 racks · 2,520 trays · 10,080 GPU · 11 SUs · 2 sites
+#   host_id = "nh-{tray_id}", tray_id = "su-{S}-rack-{RR}-tray-{TT}"
+CLUSTER = [
+    {"id": "gasan", "name": "STT 가산", "region": "Seoul",
+     "sus": [("su-1", 16), ("su-2", 8), ("su-3", 12)]},                 # 36 racks
+    {"id": "ansan", "name": "IGIS 안산", "region": "Ansan",
+     "sus": [("su-4", 16), ("su-5", 16), ("su-6", 16), ("su-7", 6),
+             ("su-8", 16), ("su-9", 16), ("su-10", 16), ("su-11", 2)]}, # 104 racks
+]
+# Optional dev cap: NICO_RACKS_LIMIT=N seeds only the first N racks (faster tests).
+_RACK_LIMIT = int(os.environ.get("NICO_RACKS_LIMIT", "0") or 0)
+RACK_ID = "su-1-rack-00"    # first rack (back-compat handle for scenarios/tests)
 
 
 def _now() -> float:
@@ -94,6 +108,8 @@ class Dpu:
 class ComputeTray:
     tray_id: str
     bmc_ip: str
+    rack_id: str = ""
+    site: str = ""
     gpus: int = GPU_PER_TRAY
     power_state: str = "On"              # Off | PoweringOn | On
     power_target: str = "On"
@@ -106,11 +122,26 @@ class ComputeTray:
     dpu_id: str = ""
 
 
+@dataclass
+class Rack:
+    rack_id: str                          # su-{S}-rack-{RR}
+    su_id: str
+    site: str                             # site display name
+    site_id: str
+    model: str = "Vera Rubin NVL72"
+    trays: List[str] = field(default_factory=list)   # tray_ids
+    dpus: List[str] = field(default_factory=list)     # dpu_ids
+    nvlink_switch_trays: int = NVLINK_SWITCH_TRAYS
+    power_shelves: int = POWER_SHELVES
+    cdus: int = CDU_COUNT
+
+
 # ── Store ─────────────────────────────────────────────────────────────
 class Store:
     def __init__(self):
         self.lock = RLock()
         self.started = _iso()
+        self.racks: Dict[str, Rack] = {}
         self.trays: Dict[str, ComputeTray] = {}
         self.dpus: Dict[str, Dpu] = {}
         self.tenant_networks: Dict[str, dict] = {}
@@ -135,28 +166,65 @@ class Store:
         self.events.append(e)
         return e
 
-    # ── VR NVL72 twin ─────────────────────────────────────────────────
+    # ── VR NVL72 cluster twin ─────────────────────────────────────────
     def seed(self):
         with self.lock:
-            self.trays.clear(); self.dpus.clear()
-            for i in range(1, COMPUTE_TRAYS + 1):
-                tid = f"{RACK_ID}-ct-{i:02d}"
-                did = f"{tid}-dpu-0"
-                self.trays[tid] = ComputeTray(
-                    tray_id=tid, bmc_ip=f"10.60.{i}.10", dpu_id=did)
-                dpu = Dpu(dpu_id=did, compute_tray_id=tid,
-                          bmc_ip=f"10.60.{i}.11")
-                # each DPU exposes 2 host PFs (pf0/pf1)
-                for pf in (0, 1):
-                    fid = f"{did}-pf-{pf}"
-                    dpu.functions[fid] = Function(
-                        function_id=fid, dpu_id=did, function_type="PF",
-                        pf_number=pf, pci_address=f"0000:03:00.{pf}",
-                        operational_state="ACTIVE")
-                _init_dpu_telemetry(dpu)
-                self.dpus[did] = dpu
-            self.event("info", "NeoCloudEmulator.1.0.TwinSeeded",
-                       [RACK_ID, str(COMPUTE_TRAYS)])
+            self.racks.clear(); self.trays.clear(); self.dpus.clear()
+            n_racks = 0
+            for site in CLUSTER:
+                oct2 = 60
+                for su_id, rack_n in site["sus"]:
+                    for r in range(rack_n):
+                        if _RACK_LIMIT and n_racks >= _RACK_LIMIT:
+                            break
+                        rack_id = f"{su_id}-rack-{r:02d}"
+                        rack = Rack(rack_id=rack_id, su_id=su_id,
+                                    site=site["name"], site_id=site["id"])
+                        oct3 = n_racks % 250
+                        for t in range(COMPUTE_TRAYS):
+                            tid = f"{rack_id}-tray-{t:02d}"
+                            did = f"{tid}-dpu-0"
+                            self.trays[tid] = ComputeTray(
+                                tray_id=tid, rack_id=rack_id, site=site["name"],
+                                bmc_ip=f"10.{oct2}.{oct3}.{10 + t}", dpu_id=did)
+                            dpu = Dpu(dpu_id=did, compute_tray_id=tid,
+                                      bmc_ip=f"10.{oct2}.{oct3}.{40 + t}")
+                            for pf in (0, 1):
+                                fid = f"{did}-pf-{pf}"
+                                dpu.functions[fid] = Function(
+                                    function_id=fid, dpu_id=did,
+                                    function_type="PF", pf_number=pf,
+                                    pci_address=f"0000:03:00.{pf}",
+                                    operational_state="ACTIVE")
+                            _init_dpu_telemetry(dpu)
+                            self.dpus[did] = dpu
+                            rack.trays.append(tid); rack.dpus.append(did)
+                        self.racks[rack_id] = rack
+                        n_racks += 1
+            self.event("info", "NeoCloudEmulator.1.0.ClusterSeeded",
+                       [str(n_racks), str(len(self.trays)),
+                        str(len(self.trays) * GPU_PER_TRAY)])
+
+    # ── cluster aggregation (light — no per-tray heavy data) ──────────
+    def rack_summary(self, rack: Rack) -> dict:
+        pw = {"On": 0, "PoweringOn": 0, "Off": 0}
+        health = {"ok": 0, "warning": 0, "critical": 0}
+        tenants = set()
+        for tid in rack.trays:
+            tr = self.trays[tid]
+            pw[self.power_state(tr)] = pw.get(self.power_state(tr), 0) + 1
+            health[tr.health] = health.get(tr.health, 0) + 1
+            d = self.dpus.get(tr.dpu_id)
+            if d:
+                tenants.update(f.tenant_id for f in d.functions.values()
+                               if f.tenant_id)
+        return {"rack_id": rack.rack_id, "su_id": rack.su_id,
+                "site": rack.site, "site_id": rack.site_id, "model": rack.model,
+                "trays": len(rack.trays), "gpus": len(rack.trays) * GPU_PER_TRAY,
+                "dpus": len(rack.dpus), "power": pw, "health": health,
+                "tenants": sorted(tenants),
+                "state": ("degraded" if health.get("critical") else
+                          "attention" if health.get("warning") else "ready")}
 
     def reset(self):
         with self.lock:

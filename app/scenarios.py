@@ -19,8 +19,8 @@ from . import dpu as dpu_ops
 
 router = APIRouter(prefix="/emulator/v1/scenarios", tags=["scenarios"])
 
-# Fresh DPU used when the caller does not pin one (ct-05 of the VR NVL72 rack).
-DEFAULT_DPU = "vr-rack-001-ct-05-dpu-0"
+# Fresh DPU used when the caller does not pin one (tray-04 of rack su-1-rack-00).
+DEFAULT_DPU = "su-1-rack-00-tray-04-dpu-0"
 
 
 # ── built-in scenario catalogue (design §12.1 – §12.5) ─────────────────

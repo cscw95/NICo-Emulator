@@ -40,11 +40,16 @@ class _CordonBody(BaseModel):
 
 
 def _tray_for(host_id: str):
-    """Map a vrcm host_id onto a twin compute tray when possible."""
+    """Map a vrcm host_id onto a twin compute tray.
+
+    vrcm host_id == "nh-{tray_id}"; the cluster twin uses the same tray_ids,
+    so this is now an exact 1:1 mapping across the full 2,520-tray fleet."""
+    tid = host_id[3:] if host_id.startswith("nh-") else host_id
+    if tid in STORE.trays:
+        return STORE.trays[tid]
     if host_id in STORE.trays:
         return STORE.trays[host_id]
-    # heuristic: reuse the twin's trays round-robin so isolation has a backing DPU
-    keys = list(STORE.trays)
+    keys = list(STORE.trays)          # fallback for non-fleet ids
     return STORE.trays[keys[hash(host_id) % len(keys)]] if keys else None
 
 
@@ -75,9 +80,22 @@ def _mkjob(op: str, host_id: str, state="succeeded", detail="", polls=0) -> dict
 
 
 @router.get("/hosts")
-def list_hosts():
+def list_hosts(limit: int = 3000, offset: int = 0):
+    """Full-fleet host list — one NicoHost per twin compute tray (2,520),
+    overlaid with any lifecycle state already touched via the bridge."""
     with STORE.lock:
-        return [_view(h) for h in _hosts.values()]
+        out = []
+        for tid, tr in list(STORE.trays.items())[offset:offset + limit]:
+            hid = f"nh-{tid}"
+            h = _hosts.get(hid)
+            if h is None:
+                out.append({"host_id": hid, "tray_id": tid, "sku": "vr-nvl72",
+                            "site": tr.site, "state": "pool_ready",
+                            "firmware_ok": True, "attested": True,
+                            "cordoned": False, "instance_id": None})
+            else:
+                out.append(_view(h))
+        return out
 
 
 @router.get("/hosts/{host_id}")

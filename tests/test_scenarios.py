@@ -34,7 +34,7 @@ def test_scenario_runs_and_passes(client, name):
 
 
 def test_scenario_accepts_target_dpu(client):
-    dpu = "vr-rack-001-ct-10-dpu-0"
+    dpu = "su-2-rack-03-tray-09-dpu-0"
     r = client.post("/emulator/v1/scenarios/inter-tenant-isolation/run",
                     json={"dpu_id": dpu})
     assert r.status_code == 200, r.text

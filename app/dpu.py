@@ -4,6 +4,7 @@ Implements NeoCloud DPU isolation endpoints, the VF/SF/representor model,
 tenant attachments with policy generation + Last-Known-Good rollback, and an
 emulated-traffic engine that drives default-deny / spoof / inter-tenant
 isolation counters and events."""
+from typing import Optional
 from fastapi import APIRouter, HTTPException
 from .store import STORE, Function, Representor, _iso
 from . import models as m
@@ -33,9 +34,24 @@ def _dpu_view(d):
 
 
 @router.get("/dpus")
-def list_dpus():
+def list_dpus(rack: Optional[str] = None, site: Optional[str] = None,
+              tenant: Optional[str] = None, q: Optional[str] = None,
+              offset: int = 0, limit: int = 3000):
+    """Cluster-scale DPU list (returns a list for back-compat).
+    Filter by rack/site/tenant/search and paginate for the 2,520-DPU fleet."""
     with STORE.lock:
-        return [_dpu_view(d) for d in STORE.dpus.values()]
+        ds = list(STORE.dpus.values())
+        if rack:
+            ds = [d for d in ds if d.compute_tray_id.startswith(rack + "-")]
+        if site:
+            ds = [d for d in ds if (STORE.trays.get(d.compute_tray_id)
+                  and STORE.trays[d.compute_tray_id].site == site)]
+        if tenant:
+            ds = [d for d in ds
+                  if any(f.tenant_id == tenant for f in d.functions.values())]
+        if q:
+            ds = [d for d in ds if q in d.dpu_id]
+        return [_dpu_view(d) for d in ds[offset:offset + limit]]
 
 
 @router.get("/dpus/{dpu_id}")
