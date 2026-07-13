@@ -155,6 +155,11 @@ def allocate(body: _InstanceBody):
         h = _host(body.host_id)
         iid = f"inst-{next(_job_seq):05d}"
         h["instance_id"] = iid; h["state"] = "allocated"; h["tenant_id"] = body.tenant_ref
+        # finalize the backing tray: provisioning -> in service (allocated)
+        tray = _tray_for(body.host_id)
+        if tray:
+            tray.lifecycle_state = "InService"; tray.boot_stage = "HostReady"
+            tray.power_target = "On"; tray.power_state = "On"
         # drive DPU isolation: attach the tenant on the backing DPU
         did = h.get("_dpu")
         if did and did in STORE.dpus:
