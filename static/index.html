@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NICo Emulator — Vera Rubin NVL72 Digital Twin</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230f1722'/%3E%3Crect x='3' y='3' width='10' height='4' rx='1' fill='%2376b900'/%3E%3Crect x='3' y='9' width='10' height='4' rx='1' fill='%2376b900'/%3E%3C/svg%3E">
+
 <style>
   :root{
     --bg:#0f1722; --card:#16202e; --line:#223142; --green:#76b900;
@@ -24,20 +26,32 @@
     border-radius:14px;color:var(--muted)}
   .pill.ok{color:var(--green);border-color:#2c4a12}
   .pill.bad{color:var(--red);border-color:#4a2530}
+  /* nav tabs */
+  nav.tabs{display:flex;gap:2px;padding:0 14px;border-bottom:1px solid var(--line);
+    flex-wrap:wrap;position:sticky;top:0;background:var(--bg);z-index:5}
+  nav.tabs button{background:transparent;color:var(--muted);border:none;
+    border-bottom:2px solid transparent;border-radius:0;padding:12px 16px;
+    font-weight:600;font-size:13px;cursor:pointer}
+  nav.tabs button:hover{color:var(--text);filter:none}
+  nav.tabs button.active{color:var(--green);border-bottom-color:var(--green)}
+  nav.tabs button .badge{margin-left:6px}
   main{padding:20px 22px;max-width:1400px;margin:0 auto}
-  section{margin-bottom:26px}
+  section.view{display:none}
+  section.view.active{display:block}
+  .sub-sec{margin-bottom:26px}
   h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
-    font-weight:600;margin:0 0 12px;display:flex;align-items:center;gap:10px}
+    font-weight:600;margin:0 0 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
   h2 .count{font-family:var(--mono);color:var(--text);background:var(--card);
     border:1px solid var(--line);border-radius:10px;padding:1px 8px;font-size:11px}
   .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
   /* twin summary */
-  .stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+  .stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
   .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
   .stat .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
   .stat .v{font-family:var(--mono);font-size:24px;font-weight:600;margin-top:4px}
   .stat .v.green{color:var(--green)}
+  .stat .v.small{font-size:16px}
   /* dpu grid */
   .dpu{cursor:pointer;transition:border-color .15s}
   .dpu:hover{border-color:#33506e}
@@ -49,20 +63,63 @@
   .dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:0 0 auto}
   .dot.ok{background:var(--green)} .dot.warning{background:var(--amber)}
   .dot.critical{background:var(--red)} .dot.unknown{background:var(--muted)}
+  .dot.pon{background:var(--green)} .dot.ppending{background:var(--amber)}
+  .dot.poff{background:#4a5a6a}
   .chips{margin-top:9px;display:flex;flex-wrap:wrap;gap:5px}
   .chip{font-family:var(--mono);font-size:10px;padding:1px 7px;border-radius:9px;
     background:#0e2a12;color:var(--green);border:1px solid #2c4a12}
   .chip.none{background:transparent;color:var(--muted);border-color:var(--line)}
-  /* telemetry table */
+  /* badges */
+  .badge{font-family:var(--mono);font-size:10px;padding:1px 7px;border-radius:9px;
+    border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+  .badge.ready{color:var(--green);border-color:#2c4a12}
+  .badge.provisioning{color:var(--amber);border-color:#4a4020}
+  .badge.degraded{color:var(--red);border-color:#4a2530}
+  .badge.discovered{color:var(--muted)}
+  /* rack */
+  .rack{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+  @media(max-width:720px){.rack{grid-template-columns:1fr}}
+  .tray{display:flex;align-items:center;gap:11px;background:var(--card);
+    border:1px solid var(--line);border-radius:8px;padding:9px 12px;cursor:pointer;
+    transition:border-color .15s}
+  .tray:hover{border-color:#33506e}
+  .tray.sel{border-color:var(--green);box-shadow:0 0 0 1px var(--green) inset}
+  .tray .tnum{font-family:var(--mono);color:var(--muted);font-size:12px;width:22px;flex:0 0 auto}
+  .tray .grow{flex:1;min-width:0}
+  .tray .tname{font-family:var(--mono);font-size:12px;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis}
+  .tray .tsub{color:var(--muted);font-size:10px;font-family:var(--mono);white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  .tray .tgpu{font-family:var(--mono);font-size:11px;color:var(--muted);flex:0 0 auto}
+  .detail{margin-top:14px;background:var(--card);border:1px solid var(--line);
+    border-radius:10px;padding:16px}
+  .detail .dh{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+  .detail .dh .id{font-family:var(--mono);color:var(--green);font-size:14px}
+  .kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px 18px}
+  .kv .kvi{display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid var(--line);
+    padding:5px 0;font-family:var(--mono);font-size:12px}
+  .kv .kvi .kk{color:var(--muted)}
+  .kv .kvi .vv{color:var(--text);text-align:right;word-break:break-all}
+  /* tables */
   table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px}
-  th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line)}
+  th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
   th{color:var(--muted);font-weight:500;text-transform:uppercase;font-size:10px;letter-spacing:.05em}
   td.num{text-align:right;color:var(--text)}
   td.num.hot{color:var(--amber)}
-  .telemetry-wrap{overflow-x:auto}
+  .tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+  .tbl-wrap table{min-width:520px}
   .tele-head{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap}
   .tele-head .id{font-family:var(--mono);color:var(--green)}
   .hint{color:var(--muted);font-size:12px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:900px){.grid2{grid-template-columns:1fr}}
+  /* boot stage pipeline */
+  .pipe{display:inline-flex;gap:4px;align-items:center;vertical-align:middle}
+  .pstep{width:20px;height:6px;border-radius:3px;background:var(--line);display:inline-block}
+  .pstep.done{background:var(--green)}
+  .pstep.cur{background:var(--amber);animation:pulse 1.2s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+  .stage-txt{font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:8px}
   /* scenarios */
   .scenario{background:var(--card);border:1px solid var(--line);border-radius:10px;
     padding:14px;margin-bottom:10px}
@@ -77,6 +134,7 @@
     padding:8px 16px;font-weight:600;font-size:13px;cursor:pointer;white-space:nowrap}
   button:hover{filter:brightness(1.08)}
   button:disabled{opacity:.5;cursor:default}
+  button.sm{padding:5px 12px;font-size:12px}
   .result{margin-top:12px;border-top:1px solid var(--line);padding-top:12px;display:none}
   .result.show{display:block}
   .verdict{font-family:var(--mono);font-size:12px;font-weight:600;padding:3px 10px;
@@ -109,31 +167,95 @@
   <div id="health"><span class="pill">connecting…</span></div>
 </header>
 
+<nav class="tabs" id="tabs">
+  <button data-sec="overview" class="active">Overview</button>
+  <button data-sec="rack">Rack</button>
+  <button data-sec="fabric">Fabric</button>
+  <button data-sec="dpus">DPUs</button>
+  <button data-sec="provisioning">Provisioning</button>
+  <button data-sec="scenarios">Scenarios</button>
+</nav>
+
 <main>
-  <section id="twin-sec">
-    <h2>Twin Summary</h2>
-    <div class="stats" id="twin"></div>
+  <!-- OVERVIEW -->
+  <section class="view active" id="view-overview">
+    <div class="sub-sec">
+      <h2>Twin Summary</h2>
+      <div class="stats" id="twin"></div>
+    </div>
+    <div class="sub-sec">
+      <h2>Recent Events <span class="count" id="ev-count">0</span></h2>
+      <div class="events" id="events"></div>
+    </div>
   </section>
 
-  <section>
-    <h2>DPUs <span class="count" id="dpu-count">0</span> <span class="hint">— click a card for telemetry</span></h2>
-    <div class="cards" id="dpus"></div>
+  <!-- RACK -->
+  <section class="view" id="view-rack">
+    <div class="sub-sec">
+      <h2>VR NVL72 Rack — Compute Trays <span class="count" id="rack-count">0</span>
+        <span class="hint">— click a tray for Redfish + provisioning detail</span></h2>
+      <div class="rack" id="rack"></div>
+      <div id="rack-detail"></div>
+    </div>
   </section>
 
-  <section id="tele-sec">
-    <h2>Selected DPU Telemetry</h2>
-    <div class="tele-head" id="tele-head"><span class="hint">Select a DPU above to view its isolation counters.</span></div>
-    <div class="telemetry-wrap"><table id="tele-table"></table></div>
+  <!-- FABRIC -->
+  <section class="view" id="view-fabric">
+    <div class="sub-sec">
+      <h2>Fabric Summary</h2>
+      <div class="stats" id="fabric-summary"></div>
+      <div id="nvlink-card" style="margin-top:12px"></div>
+    </div>
+    <div class="sub-sec">
+      <h2>InfiniBand P_Key Partitions <span class="count" id="ib-count">0</span></h2>
+      <div class="tbl-wrap"><table id="ib-table"></table></div>
+    </div>
+    <div class="sub-sec">
+      <h2>Ethernet VXLAN Segments <span class="count" id="eth-count">0</span></h2>
+      <div class="tbl-wrap"><table id="eth-table"></table></div>
+    </div>
+    <div class="sub-sec">
+      <h2>Switch Inventory <span class="count" id="sw-count">0</span></h2>
+      <div class="tbl-wrap"><table id="sw-table"></table></div>
+    </div>
   </section>
 
-  <section>
-    <h2>Fault Scenarios <span class="count" id="scn-count">0</span></h2>
-    <div id="scenarios"></div>
+  <!-- DPUs -->
+  <section class="view" id="view-dpus">
+    <div class="sub-sec">
+      <h2>DPUs <span class="count" id="dpu-count">0</span>
+        <span class="hint">— click a card to drill into telemetry, functions &amp; policy</span></h2>
+      <div class="cards" id="dpus"></div>
+    </div>
+    <div class="sub-sec">
+      <h2>Selected DPU Detail</h2>
+      <div class="tele-head" id="tele-head">
+        <span class="hint">Select a DPU above to view its isolation counters, functions and failure policy.</span>
+      </div>
+      <div id="dpu-detail"></div>
+    </div>
   </section>
 
-  <section>
-    <h2>Recent Events <span class="count" id="ev-count">0</span></h2>
-    <div class="events" id="events"></div>
+  <!-- PROVISIONING -->
+  <section class="view" id="view-provisioning">
+    <div class="sub-sec">
+      <h2>Boot / Provisioning State <span class="count" id="prov-count">0</span>
+        <span class="hint">— PXE → DHCP → iPXE → OS → Host Agent · buttons drive the boot state machine (writes)</span></h2>
+      <div class="tbl-wrap"><table id="prov-table"></table></div>
+    </div>
+    <div class="sub-sec">
+      <h2>DHCP Leases <span class="count" id="lease-count">0</span></h2>
+      <div class="tbl-wrap"><table id="lease-table"></table></div>
+    </div>
+  </section>
+
+  <!-- SCENARIOS -->
+  <section class="view" id="view-scenarios">
+    <div class="sub-sec">
+      <h2>Fault Scenarios <span class="count" id="scn-count">0</span>
+        <span class="hint">— runs against the selected DPU (pick one in the DPUs tab)</span></h2>
+      <div id="scenarios"></div>
+    </div>
   </section>
 </main>
 
@@ -142,9 +264,16 @@
 <script>
 "use strict";
 const $ = (id)=>document.getElementById(id);
+let activeSection = "overview";
 let selectedDpu = null;
+let selectedTray = null;
 let scenariosLoaded = false;
-const busy = {};   // scenario name -> running
+const busy = {};        // scenario name -> running
+const provBusy = {};    // tray_id -> provisioning walk running
+window.__trayById = {}; // redfish system cache keyed by tray Id
+
+// Redfish boot state machine (mirrors provisioning.BOOT_SEQUENCE)
+const BOOT_SEQ = ["PXE Selected","DHCP Lease","iPXE Script Fetch","OS Boot","Host Agent Ready"];
 
 // isolation counters we surface prominently in the telemetry table
 const ISO_KEYS = [
@@ -161,7 +290,15 @@ async function getJSON(url, opts){
   return r.json();
 }
 const esc = (s)=>String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
+const shortTray = (id)=>String(id).replace(/^vr-rack-\d+-/,"");
+const powerCls = (ps)=>ps==="On"?"pon":ps==="PoweringOn"?"ppending":"poff";
+const healthCls = (h)=>{const c=String(h||"").toLowerCase();
+  return ["ok","warning","critical"].includes(c)?c:"unknown";};
+const lcCls = (s)=>{const c=String(s||"").toLowerCase();
+  return ["ready","provisioning","degraded","discovered"].includes(c)?c:"discovered";};
 
+// ── global / header ───────────────────────────────────────────────────
 async function loadHealth(){
   try{
     const h = await getJSON("/healthz");
@@ -176,20 +313,177 @@ async function loadTwin(){
     const t = await getJSON("/emulator/v1/twin");
     $("sub").textContent = `${t.model} · rack ${t.rack_id}`;
     const cells = [
-      ["Rack", t.rack_id, false],
-      ["Compute Trays", t.compute_trays, false],
-      ["GPUs", t.gpus, true],
-      ["DPUs", t.dpus, false],
-      ["Tenant Networks", t.tenant_networks, false],
-      ["Attachments", t.attachments, false],
-      ["Tenants", (t.tenants && t.tenants.length) || 0, false],
+      ["Rack", t.rack_id, false, true],
+      ["Compute Trays", t.compute_trays, false, false],
+      ["GPUs", t.gpus, true, false],
+      ["DPUs", t.dpus, false, false],
+      ["Tenant Networks", t.tenant_networks, false, false],
+      ["Attachments", t.attachments, false, false],
+      ["Tenants", (t.tenants && t.tenants.length) || 0, false, false],
     ];
-    $("twin").innerHTML = cells.map(([k,v,g])=>
-      `<div class="stat"><div class="k">${esc(k)}</div><div class="v ${g?'green':''}">${esc(v)}</div></div>`
+    $("twin").innerHTML = cells.map(([k,v,g,small])=>
+      `<div class="stat"><div class="k">${esc(k)}</div>`
+      + `<div class="v ${g?'green':''} ${small?'small':''}">${esc(v)}</div></div>`
     ).join("");
   }catch(e){ $("twin").innerHTML = `<div class="hint">twin unavailable</div>`; }
 }
 
+// ── Redfish tray batch (shared by Rack + Provisioning) ────────────────
+async function loadTrays(){
+  const coll = await getJSON("/redfish/v1/Systems");
+  const ids = (coll.Members||[]).map(m=>String(m["@odata.id"]).split("/").pop());
+  const list = await Promise.all(ids.map(id=>getJSON("/redfish/v1/Systems/"+id)));
+  const by = {};
+  list.forEach(t=>{ by[t.Id]=t; });
+  window.__trayById = by;
+  return list;
+}
+
+// ── RACK view ─────────────────────────────────────────────────────────
+async function loadRack(){
+  try{
+    const list = await loadTrays();
+    $("rack-count").textContent = list.length;
+    $("rack").innerHTML = list.map(t=>{
+      const oem = (t.Oem&&t.Oem.Nvidia)||{};
+      const ps = t.PowerState, health = (t.Status&&t.Status.Health)||"OK";
+      const lc = oem.LifecycleState||"", stage = oem.BootStage||"";
+      const gpu = (t.ProcessorSummary&&t.ProcessorSummary.Count)||0;
+      const num = shortTray(t.Id).replace(/^ct-/,"");
+      const sel = (t.Id===selectedTray) ? " sel" : "";
+      return `<div class="tray${sel}" data-id="${esc(t.Id)}">
+        <span class="tnum">${esc(num)}</span>
+        <span class="dot ${powerCls(ps)}" title="Power: ${esc(ps)}"></span>
+        <div class="grow">
+          <div class="tname">${esc(shortTray(t.Id))}</div>
+          <div class="tsub">${esc(shortTray(oem.DpuId||""))} · ${esc(stage)}</div>
+        </div>
+        <span class="tgpu">${esc(gpu)}×GPU</span>
+        <span class="badge ${lcCls(lc)}">${esc(lc)}</span>
+        <span class="dot ${healthCls(health)}" title="Health: ${esc(health)}"></span>
+      </div>`;
+    }).join("");
+    document.querySelectorAll("#rack .tray").forEach(el=>{
+      el.addEventListener("click",()=>{ selectedTray = el.getAttribute("data-id");
+        loadRack(); });
+    });
+    renderRackDetail();
+  }catch(e){ $("rack").innerHTML = `<div class="hint">rack unavailable</div>`; }
+}
+
+function renderRackDetail(){
+  if(!selectedTray || !window.__trayById[selectedTray]){ $("rack-detail").innerHTML=""; return; }
+  const t = window.__trayById[selectedTray];
+  const oem = (t.Oem&&t.Oem.Nvidia)||{}, boot = t.Boot||{};
+  const ps = t.PowerState, health = (t.Status&&t.Status.Health)||"OK";
+  const proc = t.ProcessorSummary||{};
+  const rows = [
+    ["Power State", ps], ["Health", health],
+    ["Lifecycle State", oem.LifecycleState], ["Boot Stage", oem.BootStage],
+    ["GPUs", proc.Count], ["GPU Model", proc.Model],
+    ["Boot Source", boot.BootSourceOverrideTarget],
+    ["Boot Override", boot.BootSourceOverrideEnabled],
+    ["BMC IP", oem.BmcIp], ["Compute Tray Id", oem.ComputeTrayId],
+  ];
+  $("rack-detail").innerHTML = `<div class="detail">
+    <div class="dh">
+      <span class="dot ${powerCls(ps)}"></span>
+      <span class="id">${esc(t.Id)}</span>
+      <span class="badge ${lcCls(oem.LifecycleState)}">${esc(oem.LifecycleState||"")}</span>
+      <span class="hint">${esc(t.Name||"")}</span>
+    </div>
+    <div class="kv">${rows.map(([k,v])=>
+      `<div class="kvi"><span class="kk">${esc(k)}</span><span class="vv">${esc(v==null?"—":v)}</span></div>`
+    ).join("")}</div>
+    <div style="margin-top:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <span class="hint">Enforcing DPU:</span>
+      <button class="sm" id="rack-to-dpu" data-dpu="${esc(oem.DpuId||"")}">View DPU ${esc(shortTray(oem.DpuId||""))} →</button>
+    </div>
+  </div>`;
+  const b = $("rack-to-dpu");
+  if(b) b.addEventListener("click",()=>{
+    selectedDpu = b.getAttribute("data-dpu");
+    switchSection("dpus");
+    loadDpus(); loadDpuDetail();
+  });
+}
+
+// ── FABRIC view ───────────────────────────────────────────────────────
+async function loadFabric(){
+  try{
+    const [sum, nvl, ib, eth, sw] = await Promise.all([
+      getJSON("/emulator/v1/fabric/summary"),
+      getJSON("/emulator/v1/fabric/nvlink"),
+      getJSON("/emulator/v1/fabric/ib/partitions"),
+      getJSON("/emulator/v1/fabric/ethernet/segments"),
+      getJSON("/emulator/v1/fabric/switches"),
+    ]);
+    const sc = [
+      ["NVLink Domains", sum.nvlink_domains],
+      ["NVLink Trays", sum.nvlink_member_trays],
+      ["NVSwitch Trays", sum.nvlink_switch_trays],
+      ["IB Partitions", sum.ib_partitions],
+      ["Ethernet Segments", sum.ethernet_segments],
+      ["P_Keys Allocated", sum.pkeys_allocated],
+      ["Tenant Networks", sum.tenant_networks],
+      ["Attachments", sum.attachments],
+    ];
+    $("fabric-summary").innerHTML = sc.map(([k,v])=>
+      `<div class="stat"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`
+    ).join("");
+
+    $("nvlink-card").innerHTML = `<div class="card">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+        <span class="badge ready">${esc(nvl.state)}</span>
+        <span style="font-family:var(--mono);color:var(--green)">${esc(nvl.domain_id)}</span>
+        <span class="hint">${esc(nvl.topology)}</span>
+      </div>
+      <div class="kv">
+        <div class="kvi"><span class="kk">GPU Count</span><span class="vv">${esc(nvl.gpu_count)}</span></div>
+        <div class="kvi"><span class="kk">Compute Trays</span><span class="vv">${esc(nvl.compute_tray_count)}</span></div>
+        <div class="kvi"><span class="kk">NVSwitch Trays</span><span class="vv">${esc(nvl.nvswitch_tray_count)}</span></div>
+        <div class="kvi"><span class="kk">BW / GPU</span><span class="vv">${esc(nvl.bandwidth_per_gpu_gbps)} Gbps</span></div>
+      </div>
+    </div>`;
+
+    const parts = ib.partitions||[];
+    $("ib-count").textContent = parts.length;
+    $("ib-table").innerHTML =
+      `<tr><th>P_Key</th><th>Tenant</th><th>VNI</th><th>Membership</th>`
+      + `<th class="num">Members</th><th>Source</th><th>State</th></tr>`
+      + (parts.length ? parts.map(p=>
+        `<tr><td>${esc(p.pkey)}</td><td>${esc(p.tenant_id||"—")}</td>`
+        + `<td>${esc(p.vni==null?"—":p.vni)}</td><td>${esc(p.membership)}</td>`
+        + `<td class="num">${esc(p.member_count)}</td><td>${esc(p.source)}</td>`
+        + `<td>${esc(p.state)}</td></tr>`).join("")
+        : `<tr><td colspan="7" class="hint">no partitions — attach a tenant to a DPU first</td></tr>`);
+
+    const segs = eth.segments||[];
+    $("eth-count").textContent = segs.length;
+    $("eth-table").innerHTML =
+      `<tr><th>Network</th><th>Tenant</th><th>Type</th><th>VNI</th><th>VLAN</th>`
+      + `<th>VRF</th><th>Subnet</th><th class="num">Members</th><th>State</th></tr>`
+      + (segs.length ? segs.map(s=>
+        `<tr><td>${esc(s.network_id)}</td><td>${esc(s.tenant_id||"—")}</td>`
+        + `<td>${esc(s.network_type||"—")}</td><td>${esc(s.vni==null?"—":s.vni)}</td>`
+        + `<td>${esc(s.vlan_id==null?"—":s.vlan_id)}</td><td>${esc(s.vrf||"—")}</td>`
+        + `<td>${esc(s.subnet||"—")}</td><td class="num">${esc(s.member_count)}</td>`
+        + `<td>${esc(s.state)}</td></tr>`).join("")
+        : `<tr><td colspan="9" class="hint">no segments — attach a tenant to a DPU first</td></tr>`);
+
+    const switches = sw.switches||[];
+    $("sw-count").textContent = switches.length;
+    $("sw-table").innerHTML =
+      `<tr><th>Switch</th><th>Role</th><th>Fabric</th><th class="num">Ports</th>`
+      + `<th>State</th><th>Link</th></tr>`
+      + switches.map(s=>
+        `<tr><td>${esc(s.switch_id)}</td><td>${esc(s.role)}</td><td>${esc(s.fabric)}</td>`
+        + `<td class="num">${esc(s.ports)}</td><td>${esc(s.state)}</td>`
+        + `<td>${esc(s.link_state)}</td></tr>`).join("");
+  }catch(e){ $("fabric-summary").innerHTML = `<div class="hint">fabric unavailable</div>`; }
+}
+
+// ── DPU grid + drill-down ─────────────────────────────────────────────
 async function loadDpus(){
   try{
     const dpus = await getJSON("/emulator/v1/dpus");
@@ -203,42 +497,196 @@ async function loadDpus(){
       const sel = (d.dpu_id===selectedDpu) ? " sel" : "";
       return `<div class="card dpu${sel}" data-id="${esc(d.dpu_id)}">
         <div class="row">
-          <span class="id">${esc(d.dpu_id)}</span>
-          <span class="dot ${esc(health)}" title="${esc(health)}"></span>
+          <span class="id">${esc(shortTray(d.dpu_id))}</span>
+          <span class="dot ${esc(healthCls(health))}" title="${esc(health)}"></span>
         </div>
         <div class="meta"><span>mode ${esc(d.operating_mode)}</span>
           <span>gen ${esc(d.current_policy_generation)}</span></div>
         <div class="chips">${chips}</div>
       </div>`;
     }).join("");
-    document.querySelectorAll(".dpu").forEach(el=>{
+    document.querySelectorAll("#dpus .dpu").forEach(el=>{
       el.addEventListener("click",()=>{ selectedDpu = el.getAttribute("data-id");
-        loadDpus(); loadTelemetry(); });
+        loadDpus(); loadDpuDetail(); });
     });
   }catch(e){ $("dpus").innerHTML = `<div class="hint">DPUs unavailable</div>`; }
 }
 
-async function loadTelemetry(){
+async function loadDpuDetail(){
   if(!selectedDpu){ return; }
   try{
-    const t = await getJSON(`/emulator/v1/dpus/${selectedDpu}/telemetry`);
-    const m = t.metrics||{};
+    const [d, ports] = await Promise.all([
+      getJSON(`/emulator/v1/dpus/${selectedDpu}`),
+      getJSON(`/emulator/v1/dpus/${selectedDpu}/ports`),
+    ]);
+    const m = d.telemetry||{};
     $("tele-head").innerHTML =
-      `<span class="id">${esc(t.dpu_id)}</span>
-       <span class="dot ${esc(t.health)}"></span>
-       <span class="hint">health ${esc(t.health)} · arm_os ${esc(t.arm_os_state)}</span>`;
+      `<span class="id">${esc(d.dpu_id)}</span>
+       <span class="dot ${esc(healthCls(d.health))}"></span>
+       <span class="hint">health ${esc(d.health)} · arm_os ${esc(d.arm_os_state)}`
+       + ` · mode ${esc(d.operating_mode)} · gen ${esc(d.current_policy_generation)}`
+       + ` · LKG ${esc(d.last_known_good_generation)}</span>`;
+
+    // telemetry table
     const keys = ISO_KEYS.filter(k=>k in m).concat(
       Object.keys(m).filter(k=>!ISO_KEYS.includes(k)));
-    let rows = `<tr><th>Counter</th><th style="text-align:right">Value</th></tr>`;
-    rows += keys.map(k=>{
+    let tele = `<tr><th>Counter</th><th class="num">Value</th></tr>`;
+    tele += keys.map(k=>{
       const v = m[k];
       const hot = (String(k).includes("drops")||String(k).includes("failures")) && v>0;
       return `<tr><td>${esc(k)}</td><td class="num ${hot?'hot':''}">${esc(v)}</td></tr>`;
     }).join("");
-    $("tele-table").innerHTML = rows;
-  }catch(e){ $("tele-head").innerHTML = `<span class="hint">telemetry unavailable</span>`; }
+
+    // functions table
+    const fns = ports.functions||[];
+    let ftbl = `<tr><th>Function</th><th>Type</th><th>Tenant</th><th>Oper State</th>`
+      + `<th>Link</th><th>MAC</th></tr>`
+      + (fns.length ? fns.map(f=>
+        `<tr><td>${esc(f.function_id)}</td><td>${esc(f.function_type)}</td>`
+        + `<td>${esc(f.tenant_id||"—")}</td><td>${esc(f.operational_state)}</td>`
+        + `<td>${esc(f.link_state)}</td><td>${esc(f.mac_address||"—")}</td></tr>`).join("")
+        : `<tr><td colspan="6" class="hint">no functions</td></tr>`);
+
+    // representors table
+    const reps = ports.representors||[];
+    let rtbl = `<tr><th>Representor</th><th>Netdev</th><th>Switch</th>`
+      + `<th class="num">Port</th><th>Admin</th><th>Oper</th></tr>`
+      + (reps.length ? reps.map(r=>
+        `<tr><td>${esc(r.representor_id)}</td><td>${esc(r.netdev_name)}</td>`
+        + `<td>${esc(r.switch_id)}</td><td class="num">${esc(r.port_index)}</td>`
+        + `<td>${esc(r.admin_state)}</td><td>${esc(r.operational_state)}</td></tr>`).join("")
+        : `<tr><td colspan="6" class="hint">no representors</td></tr>`);
+
+    // failure policy
+    const fp = d.failure_policy||{};
+    const fpRows = Object.entries(fp).map(([k,v])=>
+      `<div class="kvi"><span class="kk">${esc(k)}</span><span class="vv">${esc(v)}</span></div>`
+    ).join("") || `<div class="hint">none</div>`;
+
+    $("dpu-detail").innerHTML = `
+      <div class="grid2">
+        <div>
+          <h2 style="margin-bottom:8px">Isolation Telemetry</h2>
+          <div class="tbl-wrap"><table>${tele}</table></div>
+        </div>
+        <div>
+          <h2 style="margin-bottom:8px">Failure Policy &amp; Arm OS</h2>
+          <div class="card">
+            <div class="kv">
+              <div class="kvi"><span class="kk">arm_os_state</span><span class="vv">${esc(d.arm_os_state)}</span></div>
+              <div class="kvi"><span class="kk">bmc_state</span><span class="vv">${esc(d.bmc_state)}</span></div>
+              <div class="kvi"><span class="kk">eswitch_mode</span><span class="vv">${esc(d.eswitch_mode)}</span></div>
+              <div class="kvi"><span class="kk">attestation</span><span class="vv">${esc(d.attestation_state)}</span></div>
+              ${fpRows}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="sub-sec" style="margin-top:16px">
+        <h2>Functions (PF / VF / SF) <span class="count">${fns.length}</span></h2>
+        <div class="tbl-wrap"><table>${ftbl}</table></div>
+      </div>
+      <div class="sub-sec">
+        <h2>Representors <span class="count">${reps.length}</span></h2>
+        <div class="tbl-wrap"><table>${rtbl}</table></div>
+      </div>`;
+  }catch(e){ $("dpu-detail").innerHTML = `<div class="hint">DPU detail unavailable</div>`; }
 }
 
+// ── PROVISIONING view ─────────────────────────────────────────────────
+function bootIndex(stage){
+  if(stage==="HostReady"||stage==="Host Agent Ready") return BOOT_SEQ.length;
+  const i = BOOT_SEQ.indexOf(stage);
+  return i<0 ? -1 : i;
+}
+function renderPipe(stage){
+  const idx = bootIndex(stage);
+  const pills = BOOT_SEQ.map((s,i)=>{
+    let cls = "pstep";
+    if(idx===BOOT_SEQ.length || (idx>=0 && i<idx)) cls+=" done";
+    else if(i===idx) cls+=" cur";
+    return `<span class="${cls}" title="${esc(s)}"></span>`;
+  }).join("");
+  const label = idx===BOOT_SEQ.length ? "Host Agent Ready"
+              : idx<0 ? (stage||"idle") : stage;
+  return `<span class="pipe">${pills}</span><span class="stage-txt">${esc(label)}</span>`;
+}
+
+async function loadProvisioning(){
+  if(Object.keys(provBusy).length) return;   // don't clobber an in-flight walk
+  try{
+    const [leases, list] = await Promise.all([
+      getJSON("/emulator/v1/dhcp/leases"),
+      loadTrays(),
+    ]);
+    $("prov-count").textContent = list.length;
+    $("prov-table").innerHTML =
+      `<tr><th>Tray</th><th>Power</th><th>Lifecycle</th><th>Boot Progress</th><th>Action</th></tr>`
+      + list.map(t=>{
+        const oem = (t.Oem&&t.Oem.Nvidia)||{};
+        const lc = oem.LifecycleState||"", stage = oem.BootStage||"";
+        const provisioning = String(lc).toLowerCase()==="provisioning";
+        const act = provisioning
+          ? `<button class="sm" disabled>Provisioning…</button>`
+          : `<button class="sm" data-prov="${esc(t.Id)}">Provision</button>`;
+        return `<tr data-row="${esc(t.Id)}">
+          <td>${esc(shortTray(t.Id))}</td>
+          <td><span class="dot ${powerCls(t.PowerState)}"></span> ${esc(t.PowerState)}</td>
+          <td data-lc><span class="badge ${lcCls(lc)}">${esc(lc)}</span></td>
+          <td data-stage>${renderPipe(stage)}</td>
+          <td>${act}</td>
+        </tr>`;
+      }).join("");
+    document.querySelectorAll("#prov-table button[data-prov]").forEach(b=>{
+      b.addEventListener("click",()=>provisionWalk(b.getAttribute("data-prov"), b));
+    });
+
+    $("lease-count").textContent = leases.length;
+    $("lease-table").innerHTML =
+      `<tr><th>Hostname</th><th>Tray</th><th>IP</th><th>MAC</th><th>Subnet</th>`
+      + `<th>Gateway</th><th class="num">Lease(s)</th><th>State</th></tr>`
+      + (leases.length ? leases.map(l=>
+        `<tr><td>${esc(l.hostname)}</td><td>${esc(shortTray(l.tray_id))}</td>`
+        + `<td>${esc(l.ip_address)}</td><td>${esc(l.mac_address)}</td>`
+        + `<td>${esc(l.subnet)}</td><td>${esc(l.gateway)}</td>`
+        + `<td class="num">${esc(l.lease_s)}</td><td>${esc(l.state)}</td></tr>`).join("")
+        : `<tr><td colspan="8" class="hint">no active leases — click Provision on a tray</td></tr>`);
+  }catch(e){ $("prov-table").innerHTML = `<div class="hint">provisioning unavailable</div>`; }
+}
+
+function updateProvRow(trayId, stage, lc){
+  const row = document.querySelector(`#prov-table tr[data-row="${CSS.escape(trayId)}"]`);
+  if(!row) return;
+  const st = row.querySelector("[data-stage]");
+  const lce = row.querySelector("[data-lc]");
+  if(st) st.innerHTML = renderPipe(stage);
+  if(lce) lce.innerHTML = `<span class="badge ${lcCls(lc)}">${esc(lc||"")}</span>`;
+}
+
+async function provisionWalk(trayId, btn){
+  if(provBusy[trayId]) return;
+  provBusy[trayId] = true; btn.disabled = true; btn.textContent = "Booting…";
+  try{
+    let r = await getJSON(`/emulator/v1/provision/${trayId}`,
+      {method:"POST", headers:{"Content-Type":"application/json"}, body:"{}"});
+    updateProvRow(trayId, r.boot_stage, r.lifecycle_state);
+    for(let i=0;i<BOOT_SEQ.length;i++){
+      await sleep(650);
+      r = await getJSON(`/emulator/v1/provision/${trayId}/step`,
+        {method:"POST", headers:{"Content-Type":"application/json"}, body:"{}"});
+      updateProvRow(trayId, r.boot_stage, r.lifecycle_state);
+      if(r.complete) break;
+    }
+  }catch(e){
+    btn.textContent = "Error";
+  }finally{
+    delete provBusy[trayId];
+    loadEvents();
+    if(activeSection==="provisioning") loadProvisioning();
+  }
+}
+
+// ── SCENARIOS ─────────────────────────────────────────────────────────
 async function loadScenarios(){
   if(scenariosLoaded) return;
   try{
@@ -286,7 +734,7 @@ async function runScenario(name, btn){
       + `${r.assertions.filter(a=>a.ok).length}/${r.assertions.length} assertions</span></div>`
       + `<div style="margin-top:8px">${asserts}</div>${delta}`;
     box.classList.add("show");
-    loadDpus(); loadTelemetry(); loadEvents();
+    loadDpus(); loadDpuDetail(); loadEvents();
   }catch(e){
     box.innerHTML = `<span class="verdict fail">ERROR</span> <span class="hint">${esc(e.message)}</span>`;
     box.classList.add("show");
@@ -295,9 +743,10 @@ async function runScenario(name, btn){
   }
 }
 
+// ── EVENTS ────────────────────────────────────────────────────────────
 async function loadEvents(){
   try{
-    const evs = await getJSON("/emulator/v1/events?limit=30");
+    const evs = await getJSON("/emulator/v1/events?limit=40");
     $("ev-count").textContent = evs.length;
     $("events").innerHTML = evs.map(e=>{
       const sev = (e.severity||"info");
@@ -309,12 +758,36 @@ async function loadEvents(){
   }catch(e){ $("events").innerHTML = `<div class="hint">events unavailable</div>`; }
 }
 
-async function poll(){
-  await Promise.all([loadHealth(), loadTwin(), loadDpus(), loadTelemetry(),
-                     loadScenarios(), loadEvents()]);
-  $("footer").textContent = "last updated " + new Date().toLocaleTimeString()
-    + " · polling every 4s · NICo Emulator";
+// ── navigation + polling ──────────────────────────────────────────────
+function switchSection(name){
+  activeSection = name;
+  document.querySelectorAll("nav.tabs button").forEach(b=>
+    b.classList.toggle("active", b.getAttribute("data-sec")===name));
+  document.querySelectorAll("section.view").forEach(s=>
+    s.classList.toggle("active", s.id==="view-"+name));
+  loadSection(name);
 }
+
+async function loadSection(s){
+  if(s==="overview") return loadEvents();
+  if(s==="rack") return loadRack();
+  if(s==="fabric") return loadFabric();
+  if(s==="dpus"){ await loadDpus(); return loadDpuDetail(); }
+  if(s==="provisioning") return loadProvisioning();
+  if(s==="scenarios") return loadScenarios();
+}
+
+async function poll(){
+  await Promise.all([loadHealth(), loadTwin()]);
+  await loadSection(activeSection);
+  $("footer").textContent = "last updated " + new Date().toLocaleTimeString()
+    + " · section: " + activeSection + " · polling every 4s · NICo Emulator";
+}
+
+document.querySelectorAll("nav.tabs button").forEach(b=>{
+  b.addEventListener("click",()=>switchSection(b.getAttribute("data-sec")));
+});
+
 poll();
 setInterval(poll, 4000);
 </script>
