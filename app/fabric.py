@@ -14,7 +14,8 @@ from typing import Optional
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from .store import STORE, RACK_ID, NVLINK_SWITCH_TRAYS, GPU_PER_TRAY, _iso
+from .store import (STORE, RACK_ID, CLUSTER, NVLINK_SWITCH_TRAYS,
+                    GPU_PER_TRAY, _iso)
 
 router = APIRouter(prefix="/emulator/v1/fabric", tags=["fabric"])
 
@@ -177,6 +178,109 @@ def ethernet_segments():
                 "state": "Up",
             })
         return {"count": len(segs), "segments": segs}
+
+
+# ── site-scoped IB topology (dual-plane Fabric-A/B, SU-aggregated) ────
+def _tenant_sites():
+    """tenant_id -> set(site_id), located via attachment -> dpu -> tray."""
+    out: dict = {}
+    for a in STORE.attachments.values():
+        tid = a.get("tenant_id")
+        d = STORE.dpus.get(a.get("dpu_id", ""))
+        if not tid or not d:
+            continue
+        tr = STORE.trays.get(d.compute_tray_id)
+        rk = STORE.racks.get(tr.rack_id) if tr else None
+        if rk:
+            out.setdefault(tid, set()).add(rk.site_id)
+    return out
+
+
+@router.get("/topology")
+def topology(site: Optional[str] = None):
+    """Per-site IB fabric topology for the dashboard popup: dual planes
+    (Fabric-A/B) of spines, SU-aggregated leaf/rack roll-up (rack counts, not
+    individual racks), tenant P_Key coloring data and per-plane link state."""
+    with STORE.lock:
+        parts = _ib_partitions()
+        tenant_pkey = {}
+        for p in parts:
+            t = p.get("tenant_id")
+            if t and t not in tenant_pkey:
+                tenant_pkey[t] = p["pkey"]
+        t_sites = _tenant_sites()
+        sites_out = []
+        for meta in CLUSTER:
+            sid = meta["id"]
+            if site and site not in (sid, meta["name"]):
+                continue
+            racks = [STORE.rack_summary(r) for r in STORE.racks.values()
+                     if r.site_id == sid]
+            sus: dict = {}
+            for r in racks:
+                su = sus.setdefault(r["su_id"], {
+                    "su_id": r["su_id"], "racks": 0, "gpus": 0,
+                    "degraded": 0, "attention": 0, "tenants": {}})
+                su["racks"] += 1
+                su["gpus"] += r["gpus"]
+                if r["state"] == "degraded":
+                    su["degraded"] += 1
+                elif r["state"] == "attention":
+                    su["attention"] += 1
+                for t in r["tenants"]:
+                    su["tenants"][t] = su["tenants"].get(t, 0) + 1
+            su_list = []
+            for su in sorted(sus.values(),
+                             key=lambda x: int(x["su_id"].split("-")[1])):
+                link = "degraded" if su["degraded"] else "up"
+                su_list.append({
+                    "su_id": su["su_id"], "racks": su["racks"],
+                    "gpus": su["gpus"],
+                    "trays": su["racks"] * len(STORE.racks[
+                        f"{su['su_id']}-rack-00"].trays),
+                    "leaves_per_network": 4,       # rail-optimized, 4 rails/net
+                    "links_800g": su["racks"] * len(STORE.racks[
+                        f"{su['su_id']}-rack-00"].trays),
+                    "degraded_racks": su["degraded"],
+                    "attention_racks": su["attention"],
+                    "tenants": [{"tenant_id": t, "racks": n,
+                                 "pkey": tenant_pkey.get(t)}
+                                for t, n in sorted(su["tenants"].items())],
+                    "links": {"Fabric-A": link, "Fabric-B": link},
+                })
+            site_tenants = sorted({t for su in su_list
+                                   for t in (x["tenant_id"] for x in su["tenants"])})
+            n_sp = min(4, max(2, (len(su_list) + 1) // 2)) if su_list else 2
+            networks = [{
+                "name": f"Fabric-{p}",
+                "spines": [{"id": f"{sid}-fab-{p.lower()}-sp{i:02d}",
+                            "model": "Quantum-X800"}
+                           for i in range(1, n_sp + 1)],
+                "state": "up",
+            } for p in ("A", "B")]
+            site_parts = [p for p in parts
+                          if p.get("tenant_id")
+                          and sid in t_sites.get(p["tenant_id"], set())]
+            site_nets = [n for n in STORE.tenant_networks.values()
+                         if n.get("tenant_id")
+                         and sid in t_sites.get(n["tenant_id"], set())]
+            sites_out.append({
+                "site_id": sid, "site": meta["name"],
+                "region": meta["region"],
+                "nico_instance": f"nico-{sid}",
+                "racks": len(racks), "gpus": sum(r["gpus"] for r in racks),
+                "trays": sum(r["trays"] for r in racks),
+                "nvlink_domains": len(racks),
+                "ib_partitions": len(site_parts),
+                "ethernet_segments": len(site_nets),
+                "ib_tier": "rail-optimized 2-tier (spine-leaf)",
+                "networks": networks,
+                "sus": su_list,
+                "tenants": [{"tenant_id": t, "pkey": tenant_pkey.get(t)}
+                            for t in site_tenants],
+            })
+        return {"generated_at": _iso(), "pkey_base": "0x%04x" % PKEY_BASE,
+                "sites": sites_out}
 
 
 # ── switch inventory ──────────────────────────────────────────────────

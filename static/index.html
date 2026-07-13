@@ -234,6 +234,59 @@
   .ev .args{color:var(--muted)}
   footer{color:var(--muted);font-size:11px;padding:16px 22px;border-top:1px solid var(--line);
     font-family:var(--mono)}
+  /* filter bar inputs (provisioning) */
+  .rackbar input{background:var(--card);color:var(--text);border:1px solid var(--line);
+    border-radius:8px;padding:6px 10px;font-family:var(--mono);font-size:12px;min-width:190px}
+  .rackbar input::placeholder{color:var(--muted)}
+  #prov-table tr[data-row]{cursor:pointer}
+  #prov-table tr[data-row]:hover td{background:#1a2635}
+  /* ── modals ── */
+  .mbk{position:fixed;inset:0;background:rgba(4,9,15,.66);z-index:60;display:none;
+    align-items:flex-start;justify-content:center;padding:4vh 16px;overflow-y:auto}
+  .mbk.open{display:flex}
+  .modal{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    width:100%;max-width:900px;box-shadow:0 18px 60px rgba(0,0,0,.55)}
+  .modal.wide{max-width:1280px}
+  .mhead{display:flex;align-items:center;gap:10px;padding:13px 18px;
+    border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .mhead .mid{font-family:var(--mono);color:var(--green);font-size:14px;font-weight:700}
+  .mhead select{background:var(--bg);color:var(--text);border:1px solid var(--line);
+    border-radius:8px;padding:5px 9px;font-family:var(--mono);font-size:12px}
+  .mhead button.x{margin-left:auto;background:transparent;border:1px solid var(--line);
+    color:var(--muted);border-radius:7px;padding:4px 12px;font-size:12px;font-weight:600}
+  .mhead button.x:hover{color:var(--text);border-color:#33506e;filter:none}
+  .mbody{padding:16px 18px;max-height:78vh;overflow:auto}
+  .mact{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}
+  .mact .hint{font-family:var(--mono)}
+  /* vertical boot stepper */
+  .vsteps{display:flex;flex-direction:column}
+  .vstep{display:flex;gap:12px;position:relative;padding:0 0 18px 0}
+  .vstep::before{content:"";position:absolute;left:8px;top:20px;bottom:0;width:2px;
+    background:var(--line)}
+  .vstep:last-child{padding-bottom:0}
+  .vstep:last-child::before{display:none}
+  .vstep .sdot{width:18px;height:18px;border-radius:50%;border:2px solid var(--line);
+    background:#101a26;flex:0 0 auto;margin-top:1px;z-index:1}
+  .vstep.done .sdot{background:var(--green);border-color:var(--green)}
+  .vstep.done::before{background:#2c4a12}
+  .vstep.cur .sdot{border-color:var(--amber);background:#241f0e;
+    animation:pulse 1.2s ease-in-out infinite}
+  .vstep .sl{font-size:12.5px;font-weight:600;color:var(--muted)}
+  .vstep.done .sl,.vstep.cur .sl{color:var(--text)}
+  .vstep.cur .sl{color:var(--amber)}
+  .vstep .sm2{font-size:11px;color:var(--muted);margin-top:2px}
+  .vstep .stag{font-family:var(--mono);font-size:10px;margin-left:8px;color:var(--muted)}
+  .vstep.done .stag{color:var(--green)}
+  .vstep.cur .stag{color:var(--amber)}
+  /* fabric site cards */
+  #fabric-sites .fleet{grid-template-columns:repeat(6,1fr)}
+  @media(max-width:720px){#fabric-sites .fleet{grid-template-columns:repeat(3,1fr)}}
+  .topo-legend{display:flex;gap:14px;flex-wrap:wrap;align-items:center;color:var(--muted);
+    font-size:11px;font-family:var(--mono);margin-bottom:10px}
+  .topo-legend .sw{width:11px;height:11px;border-radius:3px;display:inline-block;
+    vertical-align:-1px;margin-right:5px;border:1px solid var(--line)}
+  .topo-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;
+    background:#0d141d;padding:10px}
 </style>
 </head>
 <body>
@@ -306,7 +359,12 @@
   <!-- FABRIC -->
   <section class="view" id="view-fabric">
     <div class="sub-sec">
-      <h2>Fabric Summary</h2>
+      <h2>Site Fabrics <span class="count" id="fsite-count">0</span>
+        <span class="hint">— 사이트별 독립 패브릭 · "토폴로지 구성 뷰" 클릭 → 듀얼 Fabric-A/B IB 토폴로지 팝업</span></h2>
+      <div class="instances" id="fabric-sites"></div>
+    </div>
+    <div class="sub-sec">
+      <h2>Cluster Fabric Summary <span class="hint">— 클러스터 공통</span></h2>
       <div class="stats" id="fabric-summary"></div>
       <div id="nvlink-card" style="margin-top:12px"></div>
     </div>
@@ -346,7 +404,7 @@
     <div class="sub-sec">
       <div id="prov-picker"></div>
       <h2>Boot / Provisioning State <span class="count" id="prov-count">0</span>
-        <span class="hint">— PXE → DHCP → iPXE → OS → Host Agent · buttons drive the boot state machine (writes)</span></h2>
+        <span class="hint">— PXE → DHCP → iPXE → OS → Host Agent · 행 클릭 → DPU 기반 IP 할당·OS 설치 상세 팝업 · buttons drive the boot state machine (writes)</span></h2>
       <div class="tbl-wrap"><table id="prov-table"></table></div>
     </div>
     <div class="sub-sec">
@@ -365,6 +423,30 @@
   </section>
 </main>
 
+<!-- Tray provisioning detail popup -->
+<div class="mbk" id="modal-tray">
+  <div class="modal">
+    <div class="mhead">
+      <span class="mid" id="tm-title">tray</span>
+      <span id="tm-badges"></span>
+      <button class="x" data-close="modal-tray">닫기 ✕</button>
+    </div>
+    <div class="mbody" id="tm-body"><div class="hint">loading…</div></div>
+  </div>
+</div>
+
+<!-- IB fabric topology popup -->
+<div class="mbk" id="modal-topo">
+  <div class="modal wide">
+    <div class="mhead">
+      <span class="mid">IB 패브릭 토폴로지 구성 뷰 — 듀얼 네트워크 Fabric-A/B</span>
+      <span id="tp-ctl"></span>
+      <button class="x" data-close="modal-topo">닫기 ✕</button>
+    </div>
+    <div class="mbody" id="tp-body"><div class="hint">loading…</div></div>
+  </div>
+</div>
+
 <footer id="footer">polling every 4s…</footer>
 
 <script>
@@ -379,6 +461,15 @@ let scenariosLoaded = false;
 let RACKS = [];               // cached [{rack_id,su_id,site_id,site}] for pickers
 const busy = {};              // scenario name -> running
 const provBusy = {};          // tray_id -> provisioning walk running
+// provisioning filter/search state + cached rows for re-render without refetch
+let provSite = "", provSu = "", provQuery = "";
+let provTrays = [], provLeases = [];
+let trayModalId = null;       // tray whose detail popup is open
+// fabric topology popup state
+let FABRIC_TOPO = null;
+let topoSite = null, topoPlane = "both";
+const PALETTE = ["#76b900","#5aa7e8","#e8c66a","#b48ce8","#f0a3b0",
+                 "#5ad0c8","#e88a5a","#9fd05a"];
 window.__trayById = {};       // redfish system cache keyed by tray Id
 
 const BOOT_SEQ = ["PXE Selected","DHCP Lease","iPXE Script Fetch","OS Boot","Host Agent Ready"];
@@ -776,13 +867,16 @@ function renderRackDetail(){
 // ── FABRIC ────────────────────────────────────────────────────────────
 async function loadFabric(){
   try{
-    const [sum, nvl, ib, eth, sw] = await Promise.all([
+    const [sum, nvl, ib, eth, sw, topo] = await Promise.all([
       getJSON("/emulator/v1/fabric/summary"),
       getJSON("/emulator/v1/fabric/nvlink"),
       getJSON("/emulator/v1/fabric/ib/partitions"),
       getJSON("/emulator/v1/fabric/ethernet/segments"),
       getJSON("/emulator/v1/fabric/switches"),
+      getJSON("/emulator/v1/fabric/topology").catch(()=>null),
     ]);
+    FABRIC_TOPO = topo || FABRIC_TOPO;
+    renderFabricSites(topo);
     const sc = [
       ["NVLink Domains", sum.nvlink_domains],
       ["NVLink Trays", sum.nvlink_member_trays],
@@ -846,6 +940,159 @@ async function loadFabric(){
         + `<td class="num">${esc(s.ports)}</td><td>${esc(s.state)}</td>`
         + `<td>${esc(s.link_state)}</td></tr>`).join("");
   }catch(e){ $("fabric-summary").innerHTML = `<div class="hint">fabric unavailable</div>`; }
+}
+
+// ── SITE FABRIC SECTIONS + IB 토폴로지 구성 뷰 팝업 (요청 2) ──────────
+function renderFabricSites(topo){
+  const el = $("fabric-sites");
+  if(!el) return;
+  const sites = (topo&&topo.sites)||[];
+  $("fsite-count").textContent = sites.length;
+  if(!sites.length){
+    el.innerHTML = `<div class="hint">site fabric topology unavailable</div>`;
+    return;
+  }
+  el.innerHTML = sites.map(s=>{
+    const boxes = [["Racks",s.racks],["GPU",s.gpus],["NVLink Dom",s.nvlink_domains],
+      ["IB P_Key",s.ib_partitions],["Eth Seg",s.ethernet_segments],["SU",(s.sus||[]).length]];
+    const spineChips = (s.networks||[]).map(n=>
+      `<span class="suchip"><b>${esc(n.name)}</b> ${esc((n.spines||[]).length)} spine · ${esc(n.state)}</span>`
+    ).join("");
+    const tn = (s.tenants||[]).map((t,i)=>
+      `<span class="chip" style="background:transparent;border-color:${PALETTE[i%PALETTE.length]};color:${PALETTE[i%PALETTE.length]}">`
+      + `${esc(t.tenant_id)}${t.pkey?" · "+esc(t.pkey):""}</span>`).join("")
+      || `<span class="chip none">no tenant partitions</span>`;
+    return `<div class="inst">
+      <div class="ihead">
+        <div>
+          <div class="iid">${esc(s.site)}</div>
+          <div class="isite">${esc(s.nico_instance)} <span class="rgn">· ${esc(s.region)} · ${esc(s.ib_tier)}</span></div>
+        </div>
+        <button class="sm" data-topo="${esc(s.site_id)}" ${s.racks?"":"disabled"}>토폴로지 구성 뷰</button>
+      </div>
+      <h3>Fabric Summary <span class="r">${esc(s.trays)} hosts</span></h3>
+      <div class="fleet">${boxes.map(([k,v])=>
+        `<div class="fx"><div class="k">${esc(k)}</div><div class="v ${k==='GPU'?'green':''}">${esc(v)}</div></div>`
+      ).join("")}</div>
+      <h3>Dual-Plane InfiniBand (Fabric-A / Fabric-B)</h3>
+      <div class="breakdown">${spineChips || '<span class="hint">no planes</span>'}</div>
+      <h3>Tenant Partitions (P_Key)</h3>
+      <div class="chips">${tn}</div>
+    </div>`;
+  }).join("");
+  document.querySelectorAll("#fabric-sites button[data-topo]").forEach(b=>{
+    b.addEventListener("click",()=>openTopoModal(b.getAttribute("data-topo")));
+  });
+}
+
+async function openTopoModal(siteId){
+  topoSite = siteId; topoPlane = "both";
+  $("modal-topo").classList.add("open");
+  if(!FABRIC_TOPO){
+    try{ FABRIC_TOPO = await getJSON("/emulator/v1/fabric/topology"); }catch(e){}
+  }
+  renderTopoModal();
+}
+
+function renderTopoModal(){
+  const sites = (FABRIC_TOPO&&FABRIC_TOPO.sites)||[];
+  const site = sites.find(s=>s.site_id===topoSite) || sites[0];
+  if(!site){ $("tp-body").innerHTML = `<div class="hint">topology unavailable</div>`; return; }
+  topoSite = site.site_id;
+  $("tp-ctl").innerHTML =
+    `<select id="tp-site">${sites.map(s=>
+      `<option value="${esc(s.site_id)}" ${s.site_id===topoSite?"selected":""}>${esc(s.site)} · ${esc(s.site_id)}</option>`
+    ).join("")}</select>
+     <select id="tp-plane">
+       <option value="both" ${topoPlane==="both"?"selected":""}>Fabric-A + B (양쪽)</option>
+       <option value="Fabric-A" ${topoPlane==="Fabric-A"?"selected":""}>Fabric-A</option>
+       <option value="Fabric-B" ${topoPlane==="Fabric-B"?"selected":""}>Fabric-B</option>
+     </select>`;
+  $("tp-site").addEventListener("change",()=>{ topoSite=$("tp-site").value; renderTopoModal(); });
+  $("tp-plane").addEventListener("change",()=>{ topoPlane=$("tp-plane").value; renderTopoModal(); });
+  const colorOf = {};
+  (site.tenants||[]).forEach((t,i)=>colorOf[t.tenant_id]=PALETTE[i%PALETTE.length]);
+  const legend = `<div class="topo-legend">
+      <span><span class="sw" style="background:#13314f;border-color:#2a4868"></span>Fabric-A spine · 링크</span>
+      <span><span class="sw" style="background:#241b3a;border-color:#463366"></span>Fabric-B spine · 링크</span>
+      <span><span class="sw" style="background:#0e1620"></span>SU (랙 집약)</span>
+      <span style="color:var(--red)">--- degraded 링크 (파선)</span>`
+    + (site.tenants||[]).map(t=>
+      `<span><span class="sw" style="background:${colorOf[t.tenant_id]}"></span>${esc(t.tenant_id)}${t.pkey?" ("+esc(t.pkey)+")":""}</span>`
+    ).join("")
+    + ((site.tenants||[]).length?"":`<span>테넌트 파티션 없음 — 전체 미할당 풀</span>`)
+    + `</div>`;
+  $("tp-body").innerHTML =
+    `<div class="hint" style="margin-bottom:8px;font-family:var(--mono)">
+       ${esc(site.site)} (${esc(site.nico_instance)}) — ${esc(site.ib_tier)} ·
+       racks ${esc(site.racks)} · GPU ${esc(site.gpus)} · IB P_Key ${esc(site.ib_partitions)} ·
+       SU 단위 집약 뷰 (랙 개수 라벨)</div>`
+    + legend
+    + `<div class="topo-wrap">${drawTopoSVG(site, topoPlane, colorOf)}</div>`;
+}
+
+function drawTopoSVG(site, plane, colorOf){
+  const planes = plane==="both" ? ["Fabric-A","Fabric-B"] : [plane];
+  const PS = {"Fabric-A":{fill:"#13314f",stroke:"#2a4868",text:"#9fd0ff",link:"#5aa7e8"},
+              "Fabric-B":{fill:"#241b3a",stroke:"#463366",text:"#c8a5e8",link:"#b48ce8"}};
+  const sus = site.sus||[];
+  const COLW = 150, X0 = 46;
+  const W = Math.max(760, X0*2 + Math.max(sus.length,1)*COLW);
+  const spineY = {}; planes.forEach((p,i)=>spineY[p]=28+i*66);
+  const leafY = 28 + planes.length*66 + 40;
+  const suY = leafY + 58;
+  const H = suY + 112;
+  const cx = W/2;
+  let links = "", nodes = "";
+  planes.forEach(pn=>{
+    const net = (site.networks||[]).find(n=>n.name===pn); if(!net) return;
+    const st = PS[pn], n = net.spines.length, y = spineY[pn];
+    nodes += `<text x="8" y="${y+18}" fill="${st.text}" font-size="11" font-weight="700">${esc(pn)}</text>`;
+    net.spines.forEach((sp,k)=>{
+      const sx = cx + (k-(n-1)/2)*168;
+      nodes += `<rect x="${sx-72}" y="${y}" width="144" height="30" rx="6" fill="${st.fill}" stroke="${st.stroke}"/>
+        <text x="${sx}" y="${y+13}" text-anchor="middle" fill="${st.text}" font-size="9.5" font-weight="700">${esc(sp.id)}</text>
+        <text x="${sx}" y="${y+24}" text-anchor="middle" fill="${st.text}" opacity=".65" font-size="8.5">${esc(sp.model)}</text>`;
+    });
+  });
+  sus.forEach((su,i)=>{
+    const lx = X0 + i*COLW, lcx = lx + 56;
+    planes.forEach(pn=>{
+      const net = (site.networks||[]).find(n=>n.name===pn); if(!net) return;
+      const st = PS[pn], n = net.spines.length, y = spineY[pn];
+      const lstate = (su.links||{})[pn]||"up";
+      const col = lstate==="degraded" ? "#f0a3b0" : st.link;
+      net.spines.forEach((sp,k)=>{
+        const sx = cx + (k-(n-1)/2)*168;
+        links += `<line x1="${sx}" y1="${y+30}" x2="${lcx}" y2="${leafY}" stroke="${col}"
+          stroke-width="${lstate==="degraded"?1.7:0.9}" opacity="${lstate==="degraded"?0.95:0.5}"
+          ${lstate==="degraded"?'stroke-dasharray="4 3"':""}/>`;
+      });
+    });
+    nodes += `<rect x="${lx}" y="${leafY}" width="112" height="32" rx="5" fill="#101a26" stroke="#33506e"/>
+      <text x="${lcx}" y="${leafY+13}" text-anchor="middle" fill="#9fb8d0" font-size="9">leaf ×${esc(su.leaves_per_network)} /plane · rail</text>
+      <text x="${lcx}" y="${leafY+25}" text-anchor="middle" fill="#5a6b80" font-size="8.5">${esc(su.links_800g)}×800G links</text>`;
+    links += `<line x1="${lcx}" y1="${leafY+32}" x2="${lcx}" y2="${suY}" stroke="#33506e" stroke-width="1.1"/>`;
+    const degraded = (su.degraded_racks||0)>0;
+    nodes += `<rect x="${lx-10}" y="${suY}" width="132" height="96" rx="8" fill="#0e1620"
+        stroke="${degraded?"#4a2530":"#223142"}"/>
+      <text x="${lcx}" y="${suY+16}" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="700">${esc(su.su_id)}</text>
+      <text x="${lcx}" y="${suY+30}" text-anchor="middle" fill="#8aa0b4" font-size="9">${esc(su.racks)} racks · ${esc(su.gpus)} GPU</text>`;
+    const ts = su.tenants||[];
+    ts.slice(0,3).forEach((t,k)=>{
+      const ty = suY + 41 + k*16;
+      nodes += `<rect x="${lx-2}" y="${ty}" width="9" height="9" rx="2" fill="${colorOf[t.tenant_id]||"#4a5f78"}"/>
+        <text x="${lx+11}" y="${ty+8}" fill="#c9d2dc" font-size="8">${esc(t.tenant_id)}${t.pkey?" "+esc(t.pkey):""} · ${esc(t.racks)}랙</text>`;
+    });
+    if(ts.length>3)
+      nodes += `<text x="${lx-2}" y="${suY+41+3*16+8}" fill="#8aa0b4" font-size="8">+${ts.length-3} more</text>`;
+    if(!ts.length)
+      nodes += `<text x="${lcx}" y="${suY+54}" text-anchor="middle" fill="#5a6b80" font-size="8.5">미할당 풀</text>`;
+    if(degraded)
+      nodes += `<text x="${lcx}" y="${suY+88}" text-anchor="middle" fill="#f0a3b0" font-size="8">${esc(su.degraded_racks)} rack degraded</text>`;
+  });
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"
+    style="font-family:var(--mono);display:block">${links}${nodes}</svg>`;
 }
 
 // ── DPUs (scoped to selectedRack) ─────────────────────────────────────
@@ -977,49 +1224,113 @@ function renderPipe(stage){
   return `<span class="pipe">${pills}</span><span class="stage-txt">${esc(label)}</span>`;
 }
 
+// site / SU / rack filter bar + tray search (built once — survives polling)
+function provRackList(){
+  return RACKS.filter(r=>(!provSite||r.site_id===provSite)
+                       &&(!provSu||r.su_id===provSu));
+}
+function syncProvOptions(){
+  const suSel = $("pv-su"), rkSel = $("pv-rack");
+  if(!suSel||!rkSel) return;
+  const sus = [...new Set(RACKS.filter(r=>!provSite||r.site_id===provSite)
+    .map(r=>r.su_id))].sort((a,b)=>parseInt(a.split("-")[1],10)-parseInt(b.split("-")[1],10));
+  if(provSu && !sus.includes(provSu)) provSu = "";
+  suSel.innerHTML = `<option value="">전체 SU</option>` + sus.map(s=>
+    `<option value="${esc(s)}" ${s===provSu?"selected":""}>${esc(s)}</option>`).join("");
+  const list = provRackList();
+  if(list.length && !list.some(r=>r.rack_id===selectedRack))
+    selectedRack = list[0].rack_id;
+  rkSel.innerHTML = list.map(r=>
+    `<option value="${esc(r.rack_id)}" ${r.rack_id===selectedRack?"selected":""}>${esc(r.rack_id)}</option>`
+  ).join("") || `<option value="">no racks</option>`;
+}
+async function buildProvBar(){
+  await ensureRacks();
+  const el = $("prov-picker");
+  if(!el) return;
+  if($("pv-rack")){ syncProvOptions(); return; }   // already built — keep input focus
+  el.innerHTML = `<div class="rackbar">
+    <span class="hint">사이트:</span><select id="pv-site"></select>
+    <span class="hint">SU:</span><select id="pv-su"></select>
+    <span class="hint">Rack:</span><select id="pv-rack"></select>
+    <input id="pv-q" placeholder="tray 검색 (예: tray-07)" value="${esc(provQuery)}">
+    <span class="hint" id="prov-picker-meta"></span></div>`;
+  const sites = [...new Map(RACKS.map(r=>[r.site_id, r.site])).entries()];
+  $("pv-site").innerHTML = `<option value="">전체 사이트</option>` + sites.map(([id,nm])=>
+    `<option value="${esc(id)}" ${id===provSite?"selected":""}>${esc(nm)} · ${esc(id)}</option>`).join("");
+  $("pv-site").addEventListener("change",()=>{
+    provSite = $("pv-site").value; provSu = "";
+    syncProvOptions(); loadProvisioning();
+  });
+  $("pv-su").addEventListener("change",()=>{
+    provSu = $("pv-su").value;
+    syncProvOptions(); loadProvisioning();
+  });
+  $("pv-rack").addEventListener("change",()=>{
+    selectedRack = $("pv-rack").value; selectedTray = null;
+    loadProvisioning();
+  });
+  $("pv-q").addEventListener("input",()=>{
+    provQuery = $("pv-q").value.trim().toLowerCase();
+    renderProvRows();
+  });
+  syncProvOptions();
+}
+
+function renderProvRows(){
+  const trays = provTrays.filter(t=>
+    !provQuery || t.tray_id.toLowerCase().includes(provQuery));
+  $("prov-count").textContent = trays.length;
+  $("prov-table").innerHTML =
+    `<tr><th>Tray</th><th>Power</th><th>Lifecycle</th><th>Boot Progress</th><th>Action</th></tr>`
+    + (trays.map(t=>{
+      const lc = t.lifecycle_state||"", stage = t.boot_stage||"";
+      const provisioning = String(lc).toLowerCase()==="provisioning";
+      const act = provisioning
+        ? `<button class="sm" disabled>Provisioning…</button>`
+        : `<button class="sm" data-prov="${esc(t.tray_id)}">Provision</button>`;
+      return `<tr data-row="${esc(t.tray_id)}" title="클릭 → DPU 기반 IP 할당·OS 설치 상세">
+        <td>${esc(trayShort(t.tray_id))}</td>
+        <td><span class="dot ${powerCls(t.power_state)}"></span> ${esc(t.power_state)}</td>
+        <td data-lc><span class="badge ${lcCls(lc)}">${esc(lc)}</span></td>
+        <td data-stage>${renderPipe(stage)}</td>
+        <td>${act}</td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="5" class="hint">no trays match "${esc(provQuery)}"</td></tr>`);
+  document.querySelectorAll("#prov-table button[data-prov]").forEach(b=>{
+    b.addEventListener("click",(ev)=>{ ev.stopPropagation();
+      provisionWalk(b.getAttribute("data-prov"), b); });
+  });
+  document.querySelectorAll("#prov-table tr[data-row]").forEach(row=>{
+    row.addEventListener("click",()=>openTrayModal(row.getAttribute("data-row")));
+  });
+
+  $("lease-count").textContent = provLeases.length;
+  $("lease-table").innerHTML =
+    `<tr><th>Hostname</th><th>Tray</th><th>IP</th><th>MAC</th><th>Subnet</th>`
+    + `<th>Gateway</th><th class="num">Lease(s)</th><th>State</th></tr>`
+    + (provLeases.length ? provLeases.map(l=>
+      `<tr><td>${esc(l.hostname)}</td><td>${esc(trayShort(l.tray_id))}</td>`
+      + `<td>${esc(l.ip_address)}</td><td>${esc(l.mac_address)}</td>`
+      + `<td>${esc(l.subnet)}</td><td>${esc(l.gateway)}</td>`
+      + `<td class="num">${esc(l.lease_s)}</td><td>${esc(l.state)}</td></tr>`).join("")
+      : `<tr><td colspan="8" class="hint">no active leases — click Provision on a tray</td></tr>`);
+}
+
 async function loadProvisioning(){
   if(Object.keys(provBusy).length) return;   // don't clobber an in-flight walk
-  await buildRackPicker("prov-picker");
+  await buildProvBar();
   if(!selectedRack){ $("prov-table").innerHTML = `<div class="hint">no rack selected</div>`; return; }
   try{
     const [leases, rk] = await Promise.all([
       getJSON("/emulator/v1/dhcp/leases"),
       getJSON("/emulator/v1/cluster/racks/"+encodeURIComponent(selectedRack)),
     ]);
-    const trays = rk.tray_detail||[];
+    provTrays = rk.tray_detail||[];
+    provLeases = leases;
     const meta = $("prov-picker-meta");
-    if(meta) meta.textContent = `${trays.length} host(s) on ${selectedRack}`;
-    $("prov-count").textContent = trays.length;
-    $("prov-table").innerHTML =
-      `<tr><th>Tray</th><th>Power</th><th>Lifecycle</th><th>Boot Progress</th><th>Action</th></tr>`
-      + trays.map(t=>{
-        const lc = t.lifecycle_state||"", stage = t.boot_stage||"";
-        const provisioning = String(lc).toLowerCase()==="provisioning";
-        const act = provisioning
-          ? `<button class="sm" disabled>Provisioning…</button>`
-          : `<button class="sm" data-prov="${esc(t.tray_id)}">Provision</button>`;
-        return `<tr data-row="${esc(t.tray_id)}">
-          <td>${esc(trayShort(t.tray_id))}</td>
-          <td><span class="dot ${powerCls(t.power_state)}"></span> ${esc(t.power_state)}</td>
-          <td data-lc><span class="badge ${lcCls(lc)}">${esc(lc)}</span></td>
-          <td data-stage>${renderPipe(stage)}</td>
-          <td>${act}</td>
-        </tr>`;
-      }).join("");
-    document.querySelectorAll("#prov-table button[data-prov]").forEach(b=>{
-      b.addEventListener("click",()=>provisionWalk(b.getAttribute("data-prov"), b));
-    });
-
-    $("lease-count").textContent = leases.length;
-    $("lease-table").innerHTML =
-      `<tr><th>Hostname</th><th>Tray</th><th>IP</th><th>MAC</th><th>Subnet</th>`
-      + `<th>Gateway</th><th class="num">Lease(s)</th><th>State</th></tr>`
-      + (leases.length ? leases.map(l=>
-        `<tr><td>${esc(l.hostname)}</td><td>${esc(trayShort(l.tray_id))}</td>`
-        + `<td>${esc(l.ip_address)}</td><td>${esc(l.mac_address)}</td>`
-        + `<td>${esc(l.subnet)}</td><td>${esc(l.gateway)}</td>`
-        + `<td class="num">${esc(l.lease_s)}</td><td>${esc(l.state)}</td></tr>`).join("")
-        : `<tr><td colspan="8" class="hint">no active leases — click Provision on a tray</td></tr>`);
+    if(meta) meta.textContent = `${provTrays.length} host(s) on ${selectedRack}`;
+    renderProvRows();
   }catch(e){ $("prov-table").innerHTML = `<div class="hint">provisioning unavailable</div>`; }
 }
 
@@ -1052,6 +1363,162 @@ async function provisionWalk(trayId, btn){
     delete provBusy[trayId];
     loadEvents();
     if(activeSection==="provisioning") loadProvisioning();
+  }
+}
+
+// ── TRAY DETAIL POPUP — DPU 기반 IP 할당 · OS 설치 (요청 1) ────────────
+const PROV_UI_STEPS = [
+  ["PXE 요청", "UEFI 네트워크 부트 — DPU 경유 PXE Discover"],
+  ["DHCP Lease — DPU 기반 IP 할당", "DPU-DHCP 서버가 host lease 발급 · DNS A 레코드 등록"],
+  ["bootfile (iPXE) fetch", "boot.ipxe 스크립트 chainload"],
+  ["OS 이미지 다운로드 · kickstart/cloud-init", "vmlinuz / initrd 스트리밍 · 자동 설치 적용"],
+  ["재부팅", "설치 완료 후 로컬 디스크 부팅"],
+  ["HostReady — Host Agent Ready", "lifecycle Ready · NICo 등록 완료"],
+];
+function stepperHTML(boot){
+  const i = boot.stage_index, complete = !!boot.complete;
+  return `<div class="vsteps">` + PROV_UI_STEPS.map(([t,d],k)=>{
+    let cls = "";
+    if(complete || (i>=0 && k<i)) cls = "done";
+    else if(i>=0 && k===i) cls = "cur";
+    const tag = cls==="done"?"완료":cls==="cur"?"진행 중":"대기";
+    return `<div class="vstep ${cls}"><span class="sdot"></span>
+      <div><div class="sl">${esc(t)}<span class="stag">${tag}</span></div>
+      <div class="sm2">${esc(d)}</div></div></div>`;
+  }).join("") + `</div>`;
+}
+const kvi = (k,v)=>`<div class="kvi"><span class="kk">${esc(k)}</span>`
+  + `<span class="vv">${esc(v==null||v===""?"—":v)}</span></div>`;
+
+function renderTrayModal(d){
+  const t = d.tray, dp = d.dpu, ip = d.ip_allocation, boot = d.boot;
+  $("tm-title").textContent = t.tray_id;
+  $("tm-badges").innerHTML =
+    `<span class="badge ${lcCls(t.lifecycle_state)}">${esc(t.lifecycle_state)}</span>`
+    + `<span class="dot ${powerCls(t.power_state)}" title="Power ${esc(t.power_state)}"></span>`
+    + `<span class="hint">${esc(t.rack_id)} · ${esc(t.site)}</span>`;
+  const lease = ip.lease;
+  const leaseRows = lease
+    ? kvi("Host IP (DHCP lease)", lease.ip_address)
+      + kvi("DHCP 서버", lease.dhcp_server||ip.dhcp_server)
+      + kvi("Lease 시간", lease.lease_s+"s")
+      + kvi("Lease 상태", lease.state)
+      + kvi("할당 시각", lease.allocated_at)
+    : `<div class="hint" style="padding:6px 0">활성 DHCP lease 없음 — 재프로비저닝 실행 시 `
+      + `DPU-DHCP가 lease를 발급합니다.</div>`;
+  const dnsRows = (ip.dns_records||[]).map(r=>
+    `<tr><td>${esc(r.hostname)}</td><td>${esc(r.type)}</td><td>${esc(r.address)}</td>`
+    + `<td class="num">${esc(r.ttl)}</td><td>${esc(r.scope||"")}</td></tr>`).join("");
+  const powerBtn = t.power_state==="Off"
+    ? `<button class="sm" id="tm-power" data-rt="On">전원 On (Redfish)</button>`
+    : `<button class="sm ghost" id="tm-power" data-rt="ForceOff">전원 Off (Redfish ForceOff)</button>`;
+  $("tm-body").innerHTML = `<div class="grid2">
+    <div>
+      <h2 style="margin-bottom:8px">현재 상태 요약</h2>
+      <div class="kv" style="grid-template-columns:1fr 1fr">
+        ${kvi("Power", t.power_state)}${kvi("Health", t.health)}
+        ${kvi("Lifecycle", t.lifecycle_state)}${kvi("GPUs", t.gpus)}
+        ${kvi("Tenant", (t.tenants||[]).join(", ")||"—")}${kvi("BMC IP", t.bmc_ip)}
+      </div>
+      <div class="mact">
+        ${powerBtn}
+        <button class="sm" id="tm-reprov">재프로비저닝</button>
+        <span class="hint" id="tm-msg"></span>
+      </div>
+      <h2 style="margin:14px 0 8px">DPU 기반 IP 할당</h2>
+      <div class="kv" style="grid-template-columns:1fr">
+        ${kvi("담당 DPU", dp.dpu_id)}
+        ${kvi("DPU mode", (dp.operating_mode||"—")+" · arm_os "+(dp.arm_os_state||"—"))}
+        ${kvi("DPU OOB MAC", dp.oob_mac)}${kvi("DPU BMC IP", dp.bmc_ip)}
+        ${kvi("Host MAC", ip.host_mac)}${kvi("DHCP 서버 (DPU)", ip.dhcp_server)}
+        ${kvi("Gateway / Subnet", ip.gateway+" / "+ip.subnet)}
+        ${leaseRows}
+      </div>
+      <h2 style="margin:14px 0 8px">DNS 등록 <span class="hint">(${esc(ip.domain)})</span></h2>
+      <div class="tbl-wrap"><table>
+        <tr><th>Hostname</th><th>Type</th><th>Address</th><th class="num">TTL</th><th>Scope</th></tr>
+        ${dnsRows}
+      </table></div>
+    </div>
+    <div>
+      <h2 style="margin-bottom:8px">OS 설치 / 부트 단계</h2>
+      <div class="hint" style="margin-bottom:12px">boot_stage
+        <b style="color:var(--text)">${esc(boot.boot_stage)}</b>
+        · boot_source ${esc(boot.boot_source)} (${esc(boot.boot_enabled)})</div>
+      ${stepperHTML(boot)}
+      <div class="hint" style="margin-top:14px;font-family:var(--mono);word-break:break-all">
+        bootfile: ${esc(boot.bootfile_url)}<br>image: ${esc(boot.image_url)}</div>
+    </div>
+  </div>`;
+  const pb = $("tm-power");
+  if(pb) pb.addEventListener("click",()=>tmPower(pb.getAttribute("data-rt")));
+  const rb = $("tm-reprov");
+  if(rb){
+    if(provBusy[t.tray_id]){ rb.disabled = true; rb.textContent = "Provisioning…"; }
+    rb.addEventListener("click",()=>tmReprovision(rb));
+  }
+}
+
+async function openTrayModal(trayId){
+  trayModalId = trayId;
+  $("modal-tray").classList.add("open");
+  $("tm-title").textContent = trayId;
+  $("tm-badges").innerHTML = "";
+  $("tm-body").innerHTML = `<div class="hint">loading…</div>`;
+  await refreshTrayModal();
+}
+
+async function refreshTrayModal(){
+  if(!trayModalId) return;
+  const id = trayModalId;
+  try{
+    const d = await getJSON(`/emulator/v1/provision/${encodeURIComponent(id)}/detail`);
+    if(trayModalId===id) renderTrayModal(d);
+  }catch(e){
+    if(trayModalId===id)
+      $("tm-body").innerHTML = `<div class="hint">tray detail unavailable — ${esc(e.message)}</div>`;
+  }
+}
+
+async function tmPower(resetType){
+  if(!trayModalId) return;
+  const msg = $("tm-msg");
+  try{
+    const r = await getJSON(
+      `/redfish/v1/Systems/${encodeURIComponent(trayModalId)}/Actions/ComputerSystem.Reset`,
+      {method:"POST", headers:{"Content-Type":"application/json"},
+       body:JSON.stringify({ResetType:resetType})});
+    if(msg) msg.textContent = `Redfish ${resetType} → ${r.status} · PowerState ${r.PowerState}`;
+  }catch(e){ if(msg) msg.textContent = "reset failed: "+e.message; }
+  await refreshTrayModal();
+  if(activeSection==="provisioning" && !Object.keys(provBusy).length) loadProvisioning();
+}
+
+async function tmReprovision(btn){
+  const id = trayModalId;
+  if(!id || provBusy[id]) return;
+  provBusy[id] = true; btn.disabled = true; btn.textContent = "Provisioning…";
+  try{
+    let r = await getJSON(`/emulator/v1/provision/${encodeURIComponent(id)}`,
+      {method:"POST", headers:{"Content-Type":"application/json"}, body:"{}"});
+    updateProvRow(id, r.boot_stage, r.lifecycle_state);
+    if(trayModalId===id) await refreshTrayModal();
+    for(let i=0;i<BOOT_SEQ.length;i++){
+      await sleep(650);
+      r = await getJSON(`/emulator/v1/provision/${encodeURIComponent(id)}/step`,
+        {method:"POST", headers:{"Content-Type":"application/json"}, body:"{}"});
+      updateProvRow(id, r.boot_stage, r.lifecycle_state);
+      if(trayModalId===id) await refreshTrayModal();
+      if(r.complete) break;
+    }
+  }catch(e){
+    const msg = $("tm-msg");
+    if(msg) msg.textContent = "provision failed: "+e.message;
+  }finally{
+    delete provBusy[id];
+    loadEvents();
+    if(activeSection==="provisioning") loadProvisioning();
+    if(trayModalId===id) refreshTrayModal();
   }
 }
 
@@ -1157,6 +1624,32 @@ async function poll(){
 document.querySelectorAll("nav.tabs button").forEach(b=>{
   b.addEventListener("click",()=>switchSection(b.getAttribute("data-sec")));
 });
+
+// ── modal infra (팝업 열기/닫기) ──────────────────────────────────────
+function closeModal(id){
+  const m = $(id);
+  if(m) m.classList.remove("open");
+  if(id==="modal-tray") trayModalId = null;
+}
+document.querySelectorAll(".mbk").forEach(m=>{
+  m.addEventListener("click",e=>{ if(e.target===m) closeModal(m.id); });
+});
+document.querySelectorAll("button[data-close]").forEach(b=>{
+  b.addEventListener("click",()=>closeModal(b.getAttribute("data-close")));
+});
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"){ closeModal("modal-tray"); closeModal("modal-topo"); }
+});
+
+// deep links (시연용): #tray=<tray_id> → 트레이 상세 팝업 · #topo=<site_id> → 토폴로지 팝업
+(function(){
+  const mt = location.hash.match(/tray=([^&]+)/);
+  const mo = location.hash.match(/topo=([^&]+)/);
+  if(mt) setTimeout(()=>{ switchSection("provisioning");
+    openTrayModal(decodeURIComponent(mt[1])); }, 700);
+  else if(mo) setTimeout(()=>{ switchSection("fabric");
+    openTopoModal(decodeURIComponent(mo[1])); }, 700);
+})();
 
 poll();
 setInterval(poll, 4000);

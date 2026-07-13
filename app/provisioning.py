@@ -169,6 +169,73 @@ def provision_status(tray_id: str):
         return _status(_tray(tray_id))
 
 
+def _mac(prefix: str, ip: str) -> str:
+    o = (ip.split(".") + ["0", "0", "0", "0"])[:4]
+    return "%s:%02x:%02x:%02x" % (prefix, int(o[1]) & 0xff,
+                                  int(o[2]) & 0xff, int(o[3]) & 0xff)
+
+
+@router.get("/provision/{tray_id}/detail")
+def provision_detail(tray_id: str):
+    """Tray provisioning drill-down for the dashboard popup: DPU-based IP
+    allocation (DHCP lease / DNS / MACs), boot-stage stepper state and a
+    current-status summary — all derived from the shared twin."""
+    with STORE.lock:
+        tray = _tray(tray_id)
+        d = STORE.dpus.get(tray.dpu_id)
+        lease = STORE.dhcp_leases.get(tray_id)
+        _o, base = _subnet(tray.bmc_ip)
+        host_mac = lease["mac_address"] if lease else _mac("52:54:00", tray.bmc_ip)
+        tenants = sorted({f.tenant_id for f in d.functions.values()
+                          if f.tenant_id}) if d else []
+        dns = [{"hostname": _hostname(tray_id), "type": "A",
+                "address": tray.bmc_ip, "ttl": 3600, "scope": "bmc"}]
+        if lease:
+            dns.append({"hostname": f"host-{tray_id}.{DNS_DOMAIN}", "type": "A",
+                        "address": lease["ip_address"], "ttl": 3600,
+                        "scope": "host"})
+        stage = tray.boot_stage
+        complete = stage in (READY_STAGE, "Host Agent Ready")
+        idx = (len(BOOT_SEQUENCE) if complete
+               else BOOT_SEQUENCE.index(stage) if stage in BOOT_SEQUENCE else -1)
+        return {
+            "tray": {
+                "tray_id": tray.tray_id, "rack_id": tray.rack_id,
+                "site": tray.site, "gpus": tray.gpus,
+                "power_state": STORE.power_state(tray), "health": tray.health,
+                "lifecycle_state": tray.lifecycle_state, "bmc_ip": tray.bmc_ip,
+                "tenants": tenants,
+            },
+            "dpu": {
+                "dpu_id": tray.dpu_id,
+                "operating_mode": d.operating_mode if d else None,
+                "arm_os_state": d.arm_os_state if d else None,
+                "health": d.health if d else None,
+                "bmc_ip": d.bmc_ip if d else None,
+                "oob_mac": _mac("b8:3f:d2", d.bmc_ip) if d else None,
+            },
+            "ip_allocation": {
+                "host_mac": host_mac,
+                "dhcp_server": f"{base}.2",
+                "gateway": f"{base}.1",
+                "subnet": f"{base}.0/24",
+                "lease": lease,
+                "domain": DNS_DOMAIN,
+                "dns_records": dns,
+            },
+            "boot": {
+                "sequence": BOOT_SEQUENCE,
+                "boot_stage": stage,
+                "boot_source": tray.boot_source,
+                "boot_enabled": tray.boot_enabled,
+                "stage_index": idx,
+                "complete": complete,
+                "bootfile_url": f"http://{base}.2:8080/vr/{tray_id}/boot.ipxe",
+                "image_url": f"http://{base}.2:8080/vr/{tray_id}/vmlinuz",
+            },
+        }
+
+
 # ── PXE / iPXE ────────────────────────────────────────────────────────
 @router.get("/pxe/boot.ipxe", response_class=PlainTextResponse)
 def ipxe_script(tray_id: str):
