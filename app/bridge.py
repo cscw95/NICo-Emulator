@@ -10,6 +10,7 @@ Lenient: accepts any host_id vrcm sends (auto-registers on first touch and,
 when the id maps onto a twin compute tray, drives the real Redfish/DPU state).
 """
 import itertools
+from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from .store import STORE, _iso
@@ -20,6 +21,11 @@ router = APIRouter(prefix="/nico-bridge", tags=["vrcm-bridge"])
 _hosts = {}
 _jobs = {}
 _job_seq = itertools.count(1)
+
+
+def reset_bridge():
+    """Clear bridge-side lifecycle state (called by the emulator /reset)."""
+    _hosts.clear(); _jobs.clear(); _segments.clear()
 
 SANITIZE_STEPS = ["nvme_secure_erase", "gpu_memory_wipe", "system_memory_wipe",
                   "tpm_reset", "re_attestation", "firmware_revalidation",
@@ -214,3 +220,75 @@ def get_job(job_id: str):
     if not j:
         raise HTTPException(404, f"job {job_id} not found")
     return j
+
+
+# ── SDN segments (tenant VPC / L3 EVPN) — the isolating stage ──────────
+_segments = {}
+
+
+class _SegmentBody(BaseModel):
+    tenant_ref: str
+    vrf: str
+    l3vni: int
+    converged_vni: int
+    host_ids: list = []
+    allocation_id: Optional[str] = None
+
+
+def _seg_view(s: dict) -> dict:
+    return {k: v for k, v in s.items() if not k.startswith("_")}
+
+
+@router.post("/segments")
+def create_segment(body: _SegmentBody):
+    """Create a tenant VPC segment and drive DPU isolation on each host's DPU
+    (FNN L3 EVPN — vrf_dataplane vpc_<l3vni>). Same shape as vrcm NicoSegment."""
+    with STORE.lock:
+        sid = STORE.nid("seg")
+        from . import dpu as dpu_mod
+        from . import models as m
+        attached = 0
+        for hid in body.host_ids:
+            tray = _tray_for(hid)
+            did = tray.dpu_id if tray else None
+            if did and did in STORE.dpus:
+                # skip if this tenant already attached on that DPU
+                d = STORE.dpus[did]
+                if any(f.tenant_id == body.tenant_ref for f in d.functions.values()):
+                    continue
+                try:
+                    dpu_mod.create_attachment(did, m.AttachmentCreate(
+                        tenant_id=body.tenant_ref,
+                        network=m.TenantNetwork(
+                            network_id=f"net-{body.tenant_ref}-{did}",
+                            tenant_id=body.tenant_ref, network_type="vxlan",
+                            vni=body.l3vni, vrf=body.vrf,
+                            subnet="10.200.0.0/16")))
+                    attached += 1
+                except Exception:
+                    pass
+        seg = {"segment_id": sid, "tenant_ref": body.tenant_ref, "vrf": body.vrf,
+               "l3vni": body.l3vni, "converged_vni": body.converged_vni,
+               "virtualizer": "fnn", "vrf_dataplane": f"vpc_{body.l3vni}",
+               "host_ids": list(body.host_ids), "_attached": attached}
+        _segments[sid] = seg
+        STORE.event("info", "NeoCloudEmulator.1.0.SegmentCreated",
+                    [body.tenant_ref, body.vrf, str(attached)])
+        return _seg_view(seg)
+
+
+@router.get("/segments")
+def list_segments():
+    with STORE.lock:
+        return [_seg_view(s) for s in _segments.values()]
+
+
+@router.delete("/segments/{segment_id}")
+def delete_segment(segment_id: str):
+    with STORE.lock:
+        s = _segments.pop(segment_id, None)
+        if not s:
+            raise HTTPException(404, f"segment {segment_id} not found")
+        STORE.event("info", "NeoCloudEmulator.1.0.SegmentDeleted",
+                    [s["tenant_ref"], s["vrf"]])
+        return _seg_view(s)

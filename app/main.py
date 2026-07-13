@@ -127,6 +127,7 @@ def events(limit: int = 50):
 @app.post("/emulator/v1/reset")
 def reset():
     STORE.reset()
+    bridge.reset_bridge()          # also clear VRCM-bridge lifecycle state
     return {"status": "reset", "compute_trays": len(STORE.trays)}
 
 
