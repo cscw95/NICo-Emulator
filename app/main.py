@@ -14,9 +14,9 @@ STATIC = Path(__file__).parent.parent / "static"
 
 app = FastAPI(title="NICo Emulator", version=__version__,
               description="Standalone NVIDIA Infra Controller + Vera Rubin "
-                          "NVL72 digital twin. Integrates with NeoCloud OS (VRCM).")
+                          "NVL72 digital twin. Integrates with NeoCloud OS (NOCP).")
 
-# NeoCloud OS control-plane (vrcm :8000) + consoles (:8090) may call this service
+# NeoCloud OS control-plane (nocp :8000) + consoles (:8090) may call this service
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://127.0.0.1:8000", "http://127.0.0.1:8090",
@@ -129,7 +129,7 @@ def events(limit: int = 50):
 @app.post("/emulator/v1/reset")
 def reset():
     STORE.reset()
-    bridge.reset_bridge()          # also clear VRCM-bridge lifecycle state
+    bridge.reset_bridge()          # also clear NOCP-bridge lifecycle state
     return {"status": "reset", "compute_trays": len(STORE.trays)}
 
 

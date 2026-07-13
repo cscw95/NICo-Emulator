@@ -1,12 +1,16 @@
 # DSX OS NICo Emulator — Vera Rubin NVL72 Digital Twin
 
+> **분리 이력**: 이 프로젝트는 [NeoCloud OS Control-Plane(nocp)](https://github.com/cscw95/NeoCloud-Control-Plane)
+> 내부의 NICo 에뮬레이션 기능을 **독립 신규 기능으로 분리**한 저장소다.
+> nocp은 `NOCP_NICO_URL`로 이 서비스(:9000)의 `/nico-bridge`에 접속해 실연동한다.
+
 Standalone emulator of the **NVIDIA Infra Controller (NICo)** control-plane surface
 and a **Vera Rubin NVL72 rack digital twin**, with DPU-enforced tenant isolation.
 Built from the design analysis (`NICo–Vera Rubin NVL72 Emulator Code Analysis`) and
 the DPU isolation design (`NeoCloud Vera Rubin NVL72 DPU Isolation Emulator Design`).
 
-It is an **independent service** (not part of VRCM) and integrates with the existing
-**NeoCloud OS (VRCM)** control-plane over REST.
+It is an **independent service** (not part of NOCP) and integrates with the existing
+**NeoCloud OS (NOCP)** control-plane over REST.
 
 ## Quick Start
 
@@ -14,7 +18,7 @@ It is an **independent service** (not part of VRCM) and integrates with the exis
 bash run.sh        # http://127.0.0.1:9000  (dashboard at /, OpenAPI at /docs)
 ```
 
-Uses the VRCM virtualenv by default (`~/vrcm/.venv`); set `PYTHON=...` to override.
+Uses the NOCP virtualenv by default (`~/nocp/.venv`); set `PYTHON=...` to override.
 
 ## What it emulates
 
@@ -30,7 +34,7 @@ switch trays, power shelves, CDU).
 | **Fabric** | `/emulator/v1/fabric/...` | NVLink domain, InfiniBand P_Key partitions, Ethernet VXLAN segments, switch inventory |
 | **Scenarios** | `/emulator/v1/scenarios/...` | 5 built-in fault scenarios (design §12) |
 | **Metrics** | `/metrics` | Prometheus text exposition of DPU counters |
-| **VRCM bridge** | `/nico-bridge/...` | The exact contract VRCM's `NicoHttpAdapter` speaks |
+| **NOCP bridge** | `/nico-bridge/...` | The exact contract NOCP's `NicoHttpAdapter` speaks |
 
 ## Built-in fault scenarios (design §12)
 
@@ -48,34 +52,34 @@ curl -X POST http://127.0.0.1:9000/emulator/v1/scenarios/inter-tenant-isolation/
 
 Each scenario drives the real isolation engine and returns `{passed, steps, assertions, telemetry_delta}`.
 
-## Integration with NeoCloud OS (VRCM)
+## Integration with NeoCloud OS (NOCP)
 
-The emulator exposes `/nico-bridge`, which implements the same REST contract VRCM's
+The emulator exposes `/nico-bridge`, which implements the same REST contract NOCP's
 `NicoHttpAdapter` speaks (`/hosts`, `/instances`, `/jobs` with NicoHost/NicoJob shapes).
-Point VRCM's compute adapter at the emulator:
+Point NOCP's compute adapter at the emulator:
 
 ```bash
-# in the vrcm repo
-VRCM_NICO_URL=http://127.0.0.1:9000/nico-bridge ./run.sh
+# in the nocp repo
+NOCP_NICO_URL=http://127.0.0.1:9000/nico-bridge ./run.sh
 ```
 
-VRCM's provisioning lifecycle (reserve → provision → allocate → cordon → sanitize)
+NOCP's provisioning lifecycle (reserve → provision → allocate → cordon → sanitize)
 then drives the emulator's twin and DPU isolation engine. An end-to-end proof using
-VRCM's *actual* adapter code:
+NOCP's *actual* adapter code:
 
 ```bash
 # with the emulator running on :9000
-cd ~/vrcm && PYTHONPATH=. .venv/bin/python scripts/integrate_emulator.py   # 7 PASS
+cd ~/nocp && PYTHONPATH=. .venv/bin/python scripts/integrate_emulator.py   # 7 PASS
 ```
 
 > Scope note: the twin models **one** VR NVL72 rack (the design's "device/site digital
-> twin"). To back VRCM's whole multi-rack fleet, scale the twin constants in
+> twin"). To back NOCP's whole multi-rack fleet, scale the twin constants in
 > `app/store.py` or run one emulator instance per rack behind a router.
 
 ## Tests
 
 ```bash
-~/vrcm/.venv/bin/python -m pytest tests/ -q      # 19 passed
+~/nocp/.venv/bin/python -m pytest tests/ -q      # 19 passed
 ```
 
 ## Layout
@@ -88,7 +92,7 @@ app/redfish.py       Redfish BMC emulator
 app/provisioning.py  DHCP / PXE / DNS + boot state machine
 app/fabric.py        NVLink / InfiniBand / Ethernet
 app/scenarios.py     fault scenario engine (5 built-in)
-app/bridge.py        VRCM NicoHttpAdapter-compatible bridge
+app/bridge.py        NOCP NicoHttpAdapter-compatible bridge
 app/main.py          FastAPI app (CORS for :8000/:8090) + dashboard + /metrics
 static/index.html    single-page dashboard
 tests/               pytest suite
@@ -97,7 +101,7 @@ tests/               pytest suite
 ## Design notes / roadmap
 
 - Language: Python/FastAPI was chosen for single-host runnability and contract parity
-  with VRCM. The design docs suggest a Rust/Go stateful protocol layer for a production
+  with NOCP. The design docs suggest a Rust/Go stateful protocol layer for a production
   build; this emulator implements the **behavioral contract** (state machines, counters,
   fault semantics) that such a layer would expose.
 - Not yet modeled (design backlog): real DOCA Flow offload, OVS/OVN datapath, SPDM

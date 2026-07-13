@@ -1,12 +1,12 @@
-"""NeoCloud OS (VRCM) integration bridge.
+"""NeoCloud OS (NOCP) integration bridge.
 
-Exposes the exact REST contract that vrcm's NicoHttpAdapter speaks
+Exposes the exact REST contract that nocp's NicoHttpAdapter speaks
 (/hosts, /instances, /jobs with NicoHost/NicoJob shapes), backed by the
-VR NVL72 twin + DPU isolation engine. Point vrcm at this base_url:
+VR NVL72 twin + DPU isolation engine. Point nocp at this base_url:
 
-    VRCM_NICO_URL=http://127.0.0.1:9000/nico-bridge  ./run.sh
+    NOCP_NICO_URL=http://127.0.0.1:9000/nico-bridge  ./run.sh
 
-Lenient: accepts any host_id vrcm sends (auto-registers on first touch and,
+Lenient: accepts any host_id nocp sends (auto-registers on first touch and,
 when the id maps onto a twin compute tray, drives the real Redfish/DPU state).
 """
 import itertools
@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from .store import STORE, _iso
 
-router = APIRouter(prefix="/nico-bridge", tags=["vrcm-bridge"])
+router = APIRouter(prefix="/nico-bridge", tags=["nocp-bridge"])
 
 # NICo-compatible host/job registry (host_id -> record)
 _hosts = {}
@@ -46,9 +46,9 @@ class _CordonBody(BaseModel):
 
 
 def _tray_for(host_id: str):
-    """Map a vrcm host_id onto a twin compute tray.
+    """Map a nocp host_id onto a twin compute tray.
 
-    vrcm host_id == "nh-{tray_id}"; the cluster twin uses the same tray_ids,
+    nocp host_id == "nh-{tray_id}"; the cluster twin uses the same tray_ids,
     so this is now an exact 1:1 mapping across the full 2,520-tray fleet."""
     tid = host_id[3:] if host_id.startswith("nh-") else host_id
     if tid in STORE.trays:
@@ -220,7 +220,7 @@ def sanitize(host_id: str):
 def sanitize_report(host_id: str):
     with STORE.lock:
         _host(host_id)
-        # shape matches vrcm SanitizeReport: {host_id, passed, steps:[{step,ok}]}
+        # shape matches nocp SanitizeReport: {host_id, passed, steps:[{step,ok}]}
         return {"host_id": host_id, "passed": True,
                 "steps": [{"step": s, "ok": True} for s in SANITIZE_STEPS],
                 "certificate_id": f"SAN-{abs(hash(host_id)) % 9000 + 1000}",
@@ -264,7 +264,7 @@ def _seg_view(s: dict) -> dict:
 @router.post("/segments")
 def create_segment(body: _SegmentBody):
     """Create a tenant VPC segment and drive DPU isolation on each host's DPU
-    (FNN L3 EVPN — vrf_dataplane vpc_<l3vni>). Same shape as vrcm NicoSegment."""
+    (FNN L3 EVPN — vrf_dataplane vpc_<l3vni>). Same shape as nocp NicoSegment."""
     with STORE.lock:
         sid = STORE.nid("seg")
         from . import dpu as dpu_mod

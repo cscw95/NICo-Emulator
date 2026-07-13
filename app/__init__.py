@@ -1,7 +1,7 @@
 """NICo Emulator — standalone NVIDIA Infra Controller + Vera Rubin NVL72 digital twin.
 
-Independent software (not part of vrcm). Emulates the NICo control plane surface
-that NeoCloud OS (VRCM) integrates with: Redfish BMC, provisioning (DHCP/PXE),
+Independent software (not part of nocp). Emulates the NICo control plane surface
+that NeoCloud OS (NOCP) integrates with: Redfish BMC, provisioning (DHCP/PXE),
 fabric (NVLink/IB/Ethernet), and DPU-enforced tenant isolation with a fault engine.
 """
 import os

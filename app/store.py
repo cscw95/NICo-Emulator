@@ -19,7 +19,7 @@ NVLINK_SWITCH_TRAYS = 9
 POWER_SHELVES = 6
 CDU_COUNT = 1
 
-# ── Cluster topology — mirrors the NeoCloud OS (VRCM) Phase-1 fleet ────
+# ── Cluster topology — mirrors the NeoCloud OS (NOCP) Phase-1 fleet ────
 #   140 racks · 2,520 trays · 10,080 GPU · 11 SUs · 2 sites
 #   host_id = "nh-{tray_id}", tray_id = "su-{S}-rack-{RR}-tray-{TT}"
 CLUSTER = [
