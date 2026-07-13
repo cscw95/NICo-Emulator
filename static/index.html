@@ -22,6 +22,12 @@
   header .title{font-size:18px;font-weight:600}
   header .title .accent{color:var(--green)}
   header .sub{color:var(--muted);font-size:12px;margin-top:2px}
+  .hmeta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+  .ghlink{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);
+    font-size:12px;padding:4px 10px;border:1px solid var(--line);border-radius:6px;
+    color:var(--soft);text-decoration:none}
+  .ghlink:hover{border-color:var(--green);color:var(--green-text)}
+  .ghlink .ghico{color:var(--amber)}
   .pill{font-family:var(--mono);font-size:12px;padding:4px 10px;border:1px solid var(--line);
     border-radius:14px;color:var(--muted)}
   .pill.ok{color:var(--green);border-color:#2c4a12}
@@ -409,7 +415,16 @@ const lcCls = (s)=>{const c=String(s||"").toLowerCase();
 async function loadHealth(){
   try{
     const h = await getJSON("/healthz");
-    $("health").innerHTML = `<span class="pill ok">● healthy · v${esc(h.version)}</span>`;
+    const n = h.emulated_nico || {};
+    const gh = n.github ? `<a class="ghlink" href="${esc(n.github)}" target="_blank" `+
+      `rel="noopener" title="Upstream ${esc(n.repo||"NICo")} — the NICo this emulator reproduces">`+
+      `<span class="ghico">&#9733;</span>${esc(n.repo||"GitHub")}</a>` : "";
+    const emu = n.name ? `<span class="pill" title="${esc(n.note||"")}">`+
+      `emulating: ${esc(n.repo||n.name)} · ${esc(n.ref||"")}`+
+      `${n.as_of?" ("+esc(n.as_of)+")":""}</span>` : "";
+    $("health").innerHTML =
+      `<div class="hmeta">${gh}${emu}`+
+      `<span class="pill ok">● healthy · emulator v${esc(h.version)}</span></div>`;
   }catch(e){
     $("health").innerHTML = `<span class="pill bad">● unreachable</span>`;
   }

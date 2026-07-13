@@ -35,8 +35,10 @@ app.include_router(sites.router)
 
 @app.get("/healthz")
 def healthz():
+    from . import EMULATED_NICO
     return {"status": "ok", "version": __version__, "rack": RACK_ID,
-            "compute_trays": len(STORE.trays), "dpus": len(STORE.dpus)}
+            "compute_trays": len(STORE.trays), "dpus": len(STORE.dpus),
+            "emulated_nico": EMULATED_NICO}
 
 
 @app.get("/emulator/v1/twin")
