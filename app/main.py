@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .store import STORE, RACK_ID, COMPUTE_TRAYS, GPU_PER_TRAY
-from . import dpu, redfish, provisioning, fabric, scenarios, bridge
+from . import dpu, redfish, provisioning, fabric, scenarios, bridge, sites
 
 STATIC = Path(__file__).parent.parent / "static"
 
@@ -30,6 +30,7 @@ app.include_router(provisioning.router)
 app.include_router(fabric.router)
 app.include_router(scenarios.router)
 app.include_router(bridge.router)
+app.include_router(sites.router)
 
 
 @app.get("/healthz")
