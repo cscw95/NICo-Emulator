@@ -74,7 +74,13 @@ def _host(host_id: str, create=True) -> dict:
 
 
 def _view(h: dict) -> dict:
-    return {k: v for k, v in h.items() if not k.startswith("_")}
+    v = {k: val for k, val in h.items() if not k.startswith("_")}
+    # NicoHost 계약 호환: 내부 tenant_id → tenant_ref 로 노출
+    if "tenant_id" in v:
+        v.setdefault("tenant_ref", v["tenant_id"])
+    v.setdefault("tenant_ref", None)
+    v.setdefault("instance_id", None)
+    return v
 
 
 def _mkjob(op: str, host_id: str, state="succeeded", detail="", polls=0) -> dict:
