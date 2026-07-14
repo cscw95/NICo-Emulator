@@ -281,8 +281,11 @@ class VastEngine:
     def used_pb(self, c: dict, views: List[dict]) -> float:
         if c["fault"] == "capacity_pressure":
             return c["usable_pb"] * CAP_PRESSURE_PCT / 100.0
+        # 테넌트 뷰의 논리 used를 DRR로 나눠 물리 사용량(PB) 산출 후,
+        # 정상 상태는 usable의 82%를 넘지 않게 클램프(오탐 방지).
         vt = sum(v["used_tb"] for v in views if v["cluster"] == c["name"])
-        return c["base_used_pb"] + vt / 1000.0
+        physical = c["base_used_pb"] + (vt / 1000.0) / max(1.0, c["drr"])
+        return min(physical, c["usable_pb"] * 0.82)
 
     def cluster_view(self, c: dict, views: List[dict]) -> dict:
         used = self.used_pb(c, views)
