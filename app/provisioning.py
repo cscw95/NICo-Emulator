@@ -289,15 +289,32 @@ def ipxe_script(tray_id: str):
     )
 
 
-# ── Faults (재프로비저닝 = 장애) ──────────────────────────────────────
+# ── Faults (전 도메인 장애 피드 — NOCP /emu/faults가 merge) ───────────
 @router.get("/faults")
 def faults(limit: int = 30):
-    """프로비저닝 계열 장애 이력 — 재프로비저닝 에피소드 최근순.
+    """트윈 전 도메인 장애 이력 — NOCP·포털 상단 알림의 원천 피드.
 
-    recent: [{tray_id, kind:"reprovision", detail, at, resolved, resolved_at}]
-    진행 중(=HostReady 재도달 전)은 resolved=false."""
+    재프로비저닝 에피소드 + 통합 obs 알림(랙 제어/냉각/패브릭/스토리지)을
+    동일 shape로 합친다: [{tray_id, kind, detail, at, resolved, ...}]."""
     with STORE.lock:
         items = list(STORE.faults)
+        try:                          # obs 알림 merge (지연 import — 순환 방지)
+            from .observability import ENGINE as _OBS
+            _OBS.tick()
+            for a in _OBS.alert_list():
+                if a.get("domain") == "provisioning":
+                    continue          # STORE.faults가 원본 — 중복 방지
+                items.append({
+                    "tray_id": a.get("resource", "-"),
+                    "kind": a.get("domain", "obs"),
+                    "severity": a.get("severity"),
+                    "detail": a.get("summary", ""),
+                    "at": a.get("at"),
+                    "resolved": a.get("state") != "firing",
+                })
+        except Exception:
+            pass
+        items.sort(key=lambda f: f.get("at") or "")
         return {
             "count": len(items),
             "open": sum(1 for f in items if not f["resolved"]),

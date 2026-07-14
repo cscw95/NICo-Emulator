@@ -9,9 +9,10 @@ TRAY = "su-1-rack-00-tray-05"
 def test_faults_endpoint_has_seeded_sample(client):
     f = client.get("/emulator/v1/faults").json()
     assert f["count"] >= 1
-    sample = [x for x in f["recent"] if "(sample)" in x["detail"]]
+    # faults 피드는 이제 전 도메인 merge — reprovision 샘플이 포함돼 있으면 됨
+    sample = [x for x in f["recent"]
+              if "(sample)" in x["detail"] and x["kind"] == "reprovision"]
     assert sample and sample[0]["resolved"] is True
-    assert sample[0]["kind"] == "reprovision"
 
 
 def test_reprovision_of_ready_tray_is_a_fault_until_hostready(client):
