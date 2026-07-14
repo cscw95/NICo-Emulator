@@ -629,6 +629,7 @@ class ObsEngine:
                           "summary": f"{f['kind']}: {f['detail']}", "at": f["at"],
                           "state": "resolved" if f.get("resolved") else "firing"})
         items.extend(_fabric_alerts())
+        items.extend(_storage_alerts())
         items.sort(key=lambda a: (a["state"] != "firing", a["at"]), reverse=False)
         items.sort(key=lambda a: a["at"], reverse=True)
         items.sort(key=lambda a: a["state"] != "firing")
@@ -685,6 +686,21 @@ def _fabric_alerts() -> List[dict]:
     return out
 
 
+def _storage_alerts() -> List[dict]:
+    """VAST(AI Storage)·Converged rail 상태를 storage 도메인 알림으로 merge.
+
+    ufm/netq처럼 엔진 공개 함수(alerts_for_obs)를 직접 호출한다 —
+    엔드포인트의 래핑 응답({count, alarms:[...]})을 언랩할 필요가 없다."""
+    out: List[dict] = []
+    try:
+        from . import vast as _vast, converged as _converged
+        out.extend(_vast.ENGINE.alerts_for_obs())
+        out.extend(_converged.ENGINE.alerts_for_obs())
+    except Exception:
+        pass                                    # storage 에뮬레이터 미가용 시 무시
+    return out
+
+
 ENGINE = ObsEngine()
 
 
@@ -710,6 +726,11 @@ def summary():
         avail_pct = 100.0 if not contracted else (
             100.0 * (contracted - unavail) / contracted)
         cdus = list(ENGINE.cdus.values())
+        try:
+            from . import vast as _vast
+            storage = _vast.ENGINE.summary_for_obs()
+        except Exception:
+            storage = None                     # storage 에뮬레이터 미가용 시
         return {
             "gpus": counts,
             "avg_util_pct": round(ENGINE._avg_util, 1),
@@ -730,6 +751,7 @@ def summary():
             "tenants": len(ENGINE._tenants),
             "alerts_open": ENGINE.open_alert_count(),
             "slo": {"gpu_availability_pct": round(avail_pct, 3)},
+            "storage": storage,
         }
 
 

@@ -303,6 +303,7 @@
   <button data-sec="cluster">Cluster</button>
   <button data-sec="rack">Rack</button>
   <button data-sec="fabric">Fabric</button>
+  <button data-sec="storage">Storage</button>
   <button data-sec="dpus">DPUs</button>
   <button data-sec="provisioning">Provisioning</button>
   <button data-sec="scenarios">Scenarios</button>
@@ -389,6 +390,35 @@
       <h2>NetQ — Ethernet <span class="count" id="netq-count">0</span>
         <span class="hint" id="netq-val">— Spectrum-X SN5600 · NetQ validation</span></h2>
       <div class="tbl-wrap"><table id="netq-table"></table></div>
+    </div>
+    <div class="sub-sec">
+      <h2>Converged Network <span class="count" id="conv-count">0</span>
+        <span class="hint">— 스토리지·관리 N-S converged rail · CX-9 dual-port + BF-4 · Spectrum-X storage fabric</span></h2>
+      <div class="stats" id="conv-stats"></div>
+      <div class="tbl-wrap" style="margin-top:10px"><table id="conv-table"></table></div>
+    </div>
+  </section>
+
+  <!-- STORAGE (VAST Data) -->
+  <section class="view" id="view-storage">
+    <div class="sub-sec">
+      <h2>VAST Clusters <span class="count" id="vast-count">0</span>
+        <span class="hint">— 사이트별 AI Storage 1식 · DASE(CBox/DBox) · VMS 에뮬레이션</span></h2>
+      <div class="instances" id="vast-clusters"></div>
+    </div>
+    <div class="sub-sec">
+      <h2>Tenant Views <span class="count" id="vv-count">0</span>
+        <span class="hint">— NFS/S3 export · 테넌트 attachment 파생 · quota/QoS</span></h2>
+      <div class="tbl-wrap"><table id="vv-table"></table></div>
+    </div>
+    <div class="sub-sec">
+      <h2>Performance <span class="count" id="vp-count">0</span>
+        <span class="hint">— 클러스터·뷰 롤업 · 체크포인트 write burst 반영</span></h2>
+      <div class="tbl-wrap"><table id="vp-table"></table></div>
+    </div>
+    <div class="sub-sec">
+      <h2>Storage Alarms <span class="count" id="va-count">0</span></h2>
+      <div class="events" id="va-list"></div>
     </div>
   </section>
 
@@ -951,6 +981,126 @@ async function loadFabric(){
         + `<td>${esc(s.link_state)}</td></tr>`).join("");
   }catch(e){ $("fabric-summary").innerHTML = `<div class="hint">fabric unavailable</div>`; }
   loadUfmNetq().catch(()=>{});
+  loadConverged().catch(()=>{});
+}
+
+// ── Converged Network (스토리지·관리 N-S rail) — Fabric 탭 하단 ───────
+async function loadConverged(){
+  const stCls = s => s==="ok"||s==="active" ? "ready"
+    : s==="degraded" ? "warn" : "crit";
+  const [ov, pth] = await Promise.all([
+    getJSON("/converged/v1/overview"),
+    getJSON("/converged/v1/paths"),
+  ]);
+  const sites = ov.sites||[];
+  $("conv-stats").innerHTML = sites.map(s=>{
+    const sp = s.storage_paths||{}, mp = s.mgmt_paths||{};
+    return `<div class="stat"><div class="k">${esc(s.site_name)} · ${esc(s.fabric)}</div>
+      <div class="v" style="font-size:15px">
+        <span class="badge ${stCls(s.state)}">${esc(s.state)}</span>
+        storage ${esc(sp.active)}/${esc(sp.total)} · mgmt ${esc(mp.active)}/${esc(mp.total)}</div>
+      <div class="k" style="margin-top:4px">VNI seg ${esc(s.vni_segments)} · oversub ${esc(s.oversub_ratio)}:1 · ${esc(s.nic)} + ${esc(s.dpu)}</div>
+    </div>`;
+  }).join("") || `<div class="hint">converged overview unavailable</div>`;
+  const rows = pth.paths||[];
+  $("conv-count").textContent = rows.length;
+  $("conv-table").innerHTML =
+    `<tr><th>Tenant</th><th>Src SU</th><th>Dst</th><th class="num">GPU</th>`
+    + `<th class="num">BW Gbps</th><th class="num">Lat µs</th>`
+    + `<th class="num">ECN</th><th class="num">PFC pause</th><th>State</th></tr>`
+    + (rows.length ? rows.map(p=>
+      `<tr><td>${esc(p.tenant_id)}</td><td>${esc(p.src_su)}</td>`
+      + `<td style="font-family:var(--mono)">${esc(p.dst)}</td>`
+      + `<td class="num">${esc(p.gpus)}</td><td class="num">${esc(p.bw_gbps)}</td>`
+      + `<td class="num">${esc(p.latency_us)}</td><td class="num">${esc(p.ecn_marks)}</td>`
+      + `<td class="num">${esc(p.pfc_pause)}</td>`
+      + `<td><span class="badge ${stCls(p.state)}">${esc(p.state)}</span></td></tr>`).join("")
+      : `<tr><td colspan="9" class="hint">no tenant storage paths — attach a tenant to a DPU first</td></tr>`);
+}
+
+// ── STORAGE (VAST Data VMS) ───────────────────────────────────────────
+async function loadStorage(){
+  const stCls = s => s==="HEALTHY"||s==="active" ? "ready"
+    : s==="DEGRADED"||s==="degraded" ? "warn" : "crit";
+  try{
+    const [cl, vw, pf, al] = await Promise.all([
+      getJSON("/vast/v1/clusters"),
+      getJSON("/vast/v1/views"),
+      getJSON("/vast/v1/performance"),
+      getJSON("/vast/v1/alarms"),
+    ]);
+    const clusters = cl.clusters||[];
+    $("vast-count").textContent = clusters.length;
+    $("vast-clusters").innerHTML = clusters.map(c=>{
+      const pct = Math.min(100, c.used_pct||0);
+      const bar = pct>=90 ? "#ff6b6b" : pct>=75 ? "var(--amber)" : "var(--green)";
+      const perf = (pf.performance||[]).find(p=>p.scope==="cluster"&&p.name===c.name)||{};
+      return `<div class="inst">
+        <div class="ihead">
+          <div>
+            <div class="iid">${esc(c.name)}</div>
+            <div class="isite">${esc(c.site_name)} <span class="rgn">· VAST ${esc(c.version)} · DASE</span></div>
+          </div>
+          <span class="badge ${stCls(c.state)}">${esc(c.state)}</span>
+        </div>
+        <h3>Capacity <span class="r">${esc(c.used_pb)} / ${esc(c.usable_pb)} PB (${esc(pct)}%)</span></h3>
+        <div style="height:8px;background:#1c2733;border-radius:4px;overflow:hidden;margin:4px 0 10px">
+          <div style="width:${pct}%;height:8px;background:${bar}"></div>
+        </div>
+        <div class="fleet">
+          <div class="fx"><div class="k">CBox</div><div class="v">${esc(c.cboxes_active)}/${esc(c.cboxes)}</div></div>
+          <div class="fx"><div class="k">DBox</div><div class="v">${esc(c.dboxes)}</div></div>
+          <div class="fx"><div class="k">Raw PB</div><div class="v">${esc(c.raw_pb)}</div></div>
+          <div class="fx"><div class="k">DRR</div><div class="v green">${esc(c.drr)}:1</div></div>
+          <div class="fx"><div class="k">Read</div><div class="v">${esc(perf.read_gbps==null?"—":perf.read_gbps)}G</div></div>
+          <div class="fx"><div class="k">Write</div><div class="v">${esc(perf.write_gbps==null?"—":perf.write_gbps)}G${perf.ckpt_burst?" ⚡":""}</div></div>
+        </div>
+        <div class="hint" style="margin-top:6px">p99 ${esc(perf.latency_ms_p99==null?"—":perf.latency_ms_p99)}ms
+          · cache ${esc(perf.cache_hit_pct==null?"—":perf.cache_hit_pct)}%
+          · clients ${esc(perf.active_clients==null?"—":perf.active_clients)}
+          ${c.failed_drives?` · <b style="color:var(--amber)">failed drives ${esc(c.failed_drives)}</b>`:""}</div>
+      </div>`;
+    }).join("") || `<div class="hint">no VAST clusters</div>`;
+
+    const views = vw.views||[];
+    $("vv-count").textContent = views.length;
+    $("vv-table").innerHTML =
+      `<tr><th>Path</th><th>Tenant</th><th>Cluster</th><th>Protocols</th>`
+      + `<th class="num">Used TB</th><th class="num">Quota TB</th>`
+      + `<th class="num">QoS BW</th><th class="num">QoS IOPS</th><th>State</th></tr>`
+      + (views.length ? views.map(v=>
+        `<tr><td style="font-family:var(--mono)">${esc(v.path)}</td><td>${esc(v.tenant_id)}</td>`
+        + `<td>${esc(v.cluster)}</td><td>${esc((v.protocols||[]).join("/"))}</td>`
+        + `<td class="num">${esc(v.used_tb)}</td><td class="num">${esc(v.quota_tb)}</td>`
+        + `<td class="num">${esc(v.qos&&v.qos.bw_gbps)}G</td><td class="num">${esc(v.qos&&v.qos.iops_k)}K</td>`
+        + `<td><span class="badge ${stCls(v.state)}">${esc(v.state)}</span></td></tr>`).join("")
+        : `<tr><td colspan="9" class="hint">no tenant views — attach a tenant to a DPU first</td></tr>`);
+
+    const perfs = pf.performance||[];
+    $("vp-count").textContent = perfs.length;
+    $("vp-table").innerHTML =
+      `<tr><th>Name</th><th>Scope</th><th class="num">Read Gbps</th><th class="num">Write Gbps</th>`
+      + `<th class="num">Read kIOPS</th><th class="num">Write kIOPS</th>`
+      + `<th class="num">p99 ms</th><th class="num">Cache %</th><th class="num">Clients</th><th>Ckpt</th></tr>`
+      + perfs.map(p=>
+        `<tr><td style="font-family:var(--mono)">${esc(p.name)}</td><td>${esc(p.scope)}</td>`
+        + `<td class="num">${esc(p.read_gbps)}</td><td class="num">${esc(p.write_gbps)}</td>`
+        + `<td class="num">${esc(p.read_iops_k)}</td><td class="num">${esc(p.write_iops_k)}</td>`
+        + `<td class="num" ${p.latency_ms_p99>5?'style="color:#ff6b6b"':""}>${esc(p.latency_ms_p99)}</td>`
+        + `<td class="num">${esc(p.cache_hit_pct)}</td><td class="num">${esc(p.active_clients)}</td>`
+        + `<td>${p.ckpt_burst?'<span class="badge warn">burst</span>':"—"}</td></tr>`).join("");
+
+    const alarms = al.alarms||[];
+    $("va-count").textContent = al.open||0;
+    $("va-list").innerHTML = alarms.map(a=>{
+      const cls = a.state!=="firing" ? "ok"
+        : a.severity==="critical" ? "critical" : "warning";
+      return `<div class="ev"><span class="sev ${cls}">${esc(a.state==="firing"?a.severity:"resolved")}</span>`
+        + `<span class="msg">[${esc(a.resource)}] ${esc(a.summary)}</span></div>`;
+    }).join("") || `<div class="hint">no storage alarms</div>`;
+  }catch(e){
+    $("vast-clusters").innerHTML = `<div class="hint">storage emulator unavailable</div>`;
+  }
 }
 
 // ── UFM(IB)·NetQ(Ethernet) 개별 스위치 에뮬레이터 ─────────────────────
@@ -1663,6 +1813,7 @@ async function loadSection(s){
   if(s==="cluster") return loadCluster();
   if(s==="rack") return loadRack();
   if(s==="fabric") return loadFabric();
+  if(s==="storage") return loadStorage();
   if(s==="dpus"){ await loadDpus(); return loadDpuDetail(); }
   if(s==="provisioning") return loadProvisioning();
   if(s==="scenarios") return loadScenarios();
@@ -1696,13 +1847,16 @@ document.addEventListener("keydown",e=>{
 });
 
 // deep links (시연용): #tray=<tray_id> → 트레이 상세 팝업 · #topo=<site_id> → 토폴로지 팝업
+// · #sec=<section> → 탭 직행 (예: #sec=storage)
 (function(){
   const mt = location.hash.match(/tray=([^&]+)/);
   const mo = location.hash.match(/topo=([^&]+)/);
+  const ms = location.hash.match(/sec=([a-z]+)/);
   if(mt) setTimeout(()=>{ switchSection("provisioning");
     openTrayModal(decodeURIComponent(mt[1])); }, 700);
   else if(mo) setTimeout(()=>{ switchSection("fabric");
     openTopoModal(decodeURIComponent(mo[1])); }, 700);
+  else if(ms) setTimeout(()=>switchSection(ms[1]), 400);
 })();
 
 poll();
