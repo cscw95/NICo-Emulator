@@ -200,6 +200,16 @@ def release(instance_id: str):
                         d.representors.pop(a["representor_id"], None)
                         STORE.security_policies.pop(
                             a["security_policy_id"], None)
+                # 마지막 attachment까지 회수되면 테넌트 네트워크(P_Key 원천) 해제
+                if tenant and not any(
+                        a["tenant_id"] == tenant
+                        for a in STORE.attachments.values()):
+                    for nid in [k for k, n in STORE.tenant_networks.items()
+                                if n.get("tenant_id") == tenant]:
+                        STORE.tenant_networks.pop(nid, None)
+                    STORE.event("info",
+                                "NeoCloudEmulator.1.0.TenantNetworkReleased",
+                                [tenant])
                 tray = _tray_for(h["host_id"])
                 if tray:
                     tray.lifecycle_state = "Ready"
