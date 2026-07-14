@@ -126,6 +126,29 @@
   .legend .sw.ready{background:#0e2012;border-color:#254019}
   .legend .sw.attention{background:#241f0e;border-color:#4a4020}
   .legend .sw.degraded{background:#240e15;border-color:#4a2530}
+  .legend .sw.off{background:#161c23;border-color:#2a3542}
+  .legend .sw.cord{background:repeating-linear-gradient(45deg,#101a26 0 4px,rgba(240,163,176,.45) 4px 6px)}
+  .legend .sw.capped{background:#101a26;border-bottom:3px solid #5aa7e8}
+  .legend .sw.mixed{background:#101a26;border-color:var(--amber)}
+  /* rack control-state tile overlays (obs) */
+  .rtile.off{background:#161c23;border-color:#2a3542}
+  .rtile.off .rn{color:var(--muted)}
+  .rtile.off .rg{color:var(--muted);font-weight:700}
+  .rtile.mixed{border-color:var(--amber)}
+  .rtile.capped{border-bottom:3px solid #5aa7e8}
+  .rtile.cord::after{content:"";position:absolute;inset:0;border-radius:6px;pointer-events:none;
+    background:repeating-linear-gradient(45deg,transparent 0 7px,rgba(240,163,176,.16) 7px 10px)}
+  .rtile .cmark{position:absolute;top:0;left:4px;color:var(--red);font-size:10px;line-height:1.4}
+  /* rack control bars (cluster bulk + single rack) */
+  .ctrl-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:9px}
+  .ctrl-row:last-child{margin-bottom:0}
+  .ctrl-row select,.ctrl-row input{background:var(--bg);color:var(--text);border:1px solid var(--line);
+    border-radius:8px;padding:6px 10px;font-family:var(--mono);font-size:12px}
+  .ctrl-row input{width:92px}
+  .ctrl-row .lbl{color:var(--muted);font-size:12px}
+  button.dgr{background:transparent;color:var(--red);border:1px solid #4a2530}
+  button.armed,button.ghost.armed,button.dgr.armed{background:var(--amber);color:#241f0e;border-color:var(--amber)}
+  .ctl-warn{color:var(--amber);font-size:12px;font-family:var(--mono)}
   /* dpu grid */
   .dpu{cursor:pointer;transition:border-color .15s}
   .dpu:hover{border-color:#33506e}
@@ -332,14 +355,23 @@
   <!-- CLUSTER -->
   <section class="view" id="view-cluster">
     <div class="sub-sec">
+      <h2>전체 랙 제어 — 데모 <span class="hint">— 범위 일괄 제어 (power / cap / workload / cordon) · 1차 클릭 후 3초 내 재클릭으로 실행 (2단계 확인)</span></h2>
+      <div id="cluster-ctl" class="card"><div class="hint">loading…</div></div>
+    </div>
+    <div class="sub-sec">
       <h2>Cluster Fleet <span class="hint">— all racks across both NICo sites · click a rack to drill into its 18 trays</span></h2>
       <div class="stats" id="cluster-stats"></div>
+      <div class="breakdown" id="cluster-obs-chips" style="margin-top:10px"></div>
     </div>
     <div class="sub-sec">
       <div class="legend">
         <span><span class="sw ready"></span> ready</span>
         <span><span class="sw attention"></span> attention</span>
         <span><span class="sw degraded"></span> degraded</span>
+        <span><span class="sw off"></span> power OFF</span>
+        <span><span class="sw cord"></span> cordoned ⊘</span>
+        <span><span class="sw capped"></span> power cap</span>
+        <span><span class="sw mixed"></span> restart(mixed)</span>
         <span><span class="dot ok" style="width:8px;height:8px"></span> tenant attached</span>
       </div>
       <div id="cluster-racks"></div>
@@ -350,6 +382,7 @@
   <section class="view" id="view-rack">
     <div class="sub-sec">
       <div id="rack-picker"></div>
+      <div id="rack-ctl" style="margin-bottom:14px"></div>
       <h2>Rack Compute Trays <span class="count" id="rack-count">0</span>
         <span class="hint">— click a tray for Redfish + provisioning detail</span></h2>
       <div class="rack" id="rack"></div>
@@ -763,13 +796,227 @@ function rackStateCls(r){
   return "ready";
 }
 
+// ── obs rack control state (power / cap / workload / cordon) ─────────
+let obsRacks = [];            // latest GET /emulator/v1/obs/racks
+let OBSMAP = {};              // rack_id -> obs rack
+let obsSummary = null;        // latest GET /emulator/v1/obs/summary
+const ARMED = {};             // 2단계 확인: akey -> timeout handle
+const WARN_TXT = "주의: 테넌트 워크로드 영향 — 해당 범위의 실행 중 워크로드가 중단될 수 있습니다. 3초 내 재클릭 시 즉시 실행됩니다.";
+
+async function loadObs(){
+  try{
+    const [rs, sm] = await Promise.all([
+      getJSON("/emulator/v1/obs/racks"),
+      getJSON("/emulator/v1/obs/summary"),
+    ]);
+    obsRacks = rs||[];
+    OBSMAP = {};
+    obsRacks.forEach(r=>{ OBSMAP[r.rack_id] = r; });
+    obsSummary = sm||null;
+  }catch(e){ /* keep last known obs state */ }
+}
+
+function disarmBtn(btn, warnEl){
+  const key = btn.dataset.akey;
+  if(ARMED[key]){ clearTimeout(ARMED[key]); delete ARMED[key]; }
+  btn.classList.remove("armed");
+  if(btn.dataset.label) btn.textContent = btn.dataset.label;
+  if(warnEl) warnEl.textContent = "";
+}
+function confirmThen(btn, warnEl, warnText, fn){
+  const key = btn.dataset.akey;
+  if(ARMED[key]){                       // 2차 클릭 (3초 내) → 실행
+    disarmBtn(btn, warnEl);
+    fn();
+    return;
+  }
+  if(!btn.dataset.label) btn.dataset.label = btn.textContent;
+  btn.textContent = "확인 — 실행";
+  btn.classList.add("armed");
+  if(warnEl) warnEl.textContent = warnText||"";
+  ARMED[key] = setTimeout(()=>disarmBtn(btn, warnEl), 3000);
+}
+
+function buildAction(act, capEl, capuEl, profEl){
+  if(act==="power_cap"){
+    const v = parseFloat(capEl && capEl.value);
+    if(!isFinite(v) || v<=0) return {err:"Power Cap 값을 먼저 입력하세요"};
+    return {action:"power_cap",
+      params: (capuEl&&capuEl.value)==="pct" ? {cap_pct:v} : {cap_kw:v}};
+  }
+  if(act==="workload")
+    return {action:"workload", params:{profile:(profEl&&profEl.value)||"steady"}};
+  if(act==="cordon")
+    return {action:"cordon", params:{reason:"dashboard demo control"}};
+  return {action:act};
+}
+
+function ctlButtonsHTML(pfx){
+  return `<button class="sm" data-act="power_on" data-akey="${pfx}:power_on">전원 On</button>
+    <button class="sm dgr" data-act="power_off" data-akey="${pfx}:power_off">전원 Off</button>
+    <button class="sm ghost" data-act="restart" data-akey="${pfx}:restart">재시작</button>
+    <button class="sm dgr" data-act="cordon" data-akey="${pfx}:cordon">Cordon</button>
+    <button class="sm ghost" data-act="uncordon" data-akey="${pfx}:uncordon">Uncordon</button>`;
+}
+function ctlCapProfHTML(pfx){
+  return `<span class="lbl">Power Cap:</span>
+    <input id="${pfx}-cap" type="number" min="1" step="1" placeholder="값">
+    <select id="${pfx}-capu"><option value="kw">kW</option><option value="pct">%</option></select>
+    <button class="sm" data-act="power_cap" data-akey="${pfx}:power_cap">Power Cap 적용</button>
+    <button class="sm ghost" data-act="power_uncap" data-akey="${pfx}:power_uncap">Cap 해제</button>
+    <span class="lbl" style="margin-left:10px">Workload:</span>
+    <select id="${pfx}-prof">
+      <option value="idle">idle</option><option value="steady" selected>steady</option>
+      <option value="train">train</option><option value="burst">burst</option>
+    </select>
+    <button class="sm" data-act="workload" data-akey="${pfx}:workload">프로필 적용</button>`;
+}
+
+// Cluster 탭 상단 일괄 제어 바 — 한 번만 생성 (폴링에도 입력·armed 상태 유지)
+function buildClusterCtl(){
+  const el = $("cluster-ctl");
+  if(!el || $("ctl-scope")) return;
+  if(!obsRacks.length){
+    el.innerHTML = `<div class="hint">rack control API (obs) unavailable</div>`;
+    return;
+  }
+  const sites = [...new Set(obsRacks.map(r=>r.site))];
+  const sus = [...new Set(obsRacks.map(r=>r.su_id))]
+    .sort((a,b)=>parseInt(a.split("-")[1],10)-parseInt(b.split("-")[1],10));
+  el.innerHTML = `
+    <div class="ctrl-row">
+      <span class="lbl">범위:</span>
+      <select id="ctl-scope">
+        <option value="all">전체 ${esc(obsRacks.length)}랙</option>
+        ${sites.map(s=>`<option value="site:${esc(s)}">사이트 ${esc(s)}</option>`).join("")}
+        ${sus.map(s=>`<option value="su:${esc(s)}">${esc(s)}</option>`).join("")}
+      </select>
+      ${ctlButtonsHTML("bulk")}
+    </div>
+    <div class="ctrl-row">${ctlCapProfHTML("ctl")}</div>
+    <div class="ctrl-row">
+      <span class="ctl-warn" id="ctl-warn"></span>
+      <span id="ctl-result"></span>
+    </div>`;
+  el.querySelectorAll("button[data-act]").forEach(b=>{
+    b.addEventListener("click",()=>{
+      const act = b.getAttribute("data-act");
+      confirmThen(b, $("ctl-warn"),
+        (act==="power_off"||act==="cordon") ? WARN_TXT : "",
+        ()=>execBulk(act));
+    });
+  });
+}
+
+async function execBulk(act){
+  const scopeSel = $("ctl-scope");
+  if(!scopeSel) return;
+  const v = scopeSel.value;
+  const scope = v==="all" ? {all:true}
+    : v.startsWith("site:") ? {site:v.slice(5)}
+    : {su:v.slice(3)};
+  const a = buildAction(act, $("ctl-cap"), $("ctl-capu"), $("ctl-prof"));
+  const res = $("ctl-result");
+  if(a.err){ res.innerHTML = `<span class="badge degraded">${esc(a.err)}</span>`; return; }
+  try{
+    const body = {scope, action:a.action};
+    if(a.params) body.params = a.params;
+    const r = await getJSON("/emulator/v1/obs/racks/control",
+      {method:"POST", headers:{"Content-Type":"application/json"},
+       body:JSON.stringify(body)});
+    const nFail = (r.failed||[]).length;
+    res.innerHTML = `<span class="badge ${nFail?"provisioning":"ready"}">`
+      + `${esc(a.action)} → ${esc(r.applied)}/${esc(r.matched)} racks</span>`
+      + (nFail?` <span class="hint">failed ${esc(nFail)}</span>`:"")
+      + (r.summary?` <span class="hint">${esc(r.summary)}</span>`:"");
+  }catch(e){
+    res.innerHTML = `<span class="badge degraded">실패: ${esc(e.message)}</span>`;
+  }
+  if(activeSection==="cluster") await loadCluster();   // 그리드 즉시 갱신
+  else await loadObs();
+}
+
+// Rack 탭 단일 랙 제어 카드 — 한 번만 생성, 상태 행만 갱신
+function buildRackCtl(){
+  const el = $("rack-ctl");
+  if(!el) return;
+  if(!$("rc-state")){
+    el.innerHTML = `<div class="card">
+      <div class="ctrl-row" id="rc-state"></div>
+      <div class="ctrl-row">${ctlButtonsHTML("rack")}</div>
+      <div class="ctrl-row">${ctlCapProfHTML("rc")}</div>
+      <div class="ctrl-row">
+        <span class="ctl-warn" id="rc-warn"></span>
+        <span id="rc-result"></span>
+      </div>
+    </div>`;
+    el.querySelectorAll("button[data-act]").forEach(b=>{
+      b.addEventListener("click",()=>{
+        const act = b.getAttribute("data-act");
+        confirmThen(b, $("rc-warn"),
+          (act==="power_off"||act==="cordon") ? WARN_TXT : "",
+          ()=>execRack(act));
+      });
+    });
+  }
+  updateRackCtlState();
+}
+
+function updateRackCtlState(){
+  const st = $("rc-state");
+  if(!st) return;
+  const ob = OBSMAP[selectedRack];
+  if(!ob){
+    st.innerHTML = `<span class="lbl">랙 제어 — 데모 ·</span>`
+      + `<span class="hint">obs 상태 미확인 (${esc(selectedRack||"랙 미선택")})</span>`;
+    return;
+  }
+  const pCls = ob.power_state==="on" ? "ready"
+    : ob.power_state==="off" ? "degraded" : "provisioning";
+  st.innerHTML = `<span class="lbl">랙 제어 — 데모 ·</span>
+    <span style="font-family:var(--mono);color:var(--green)">${esc(ob.rack_id)}</span>
+    <span class="badge ${pCls}">power ${esc(ob.power_state)}</span>
+    <span class="badge" ${ob.power_cap_kw!=null?'style="color:#5aa7e8;border-color:#2a4868"':""}>`
+    + `cap ${ob.power_cap_kw==null?"없음":esc(ob.power_cap_kw)+" kW"}</span>
+    <span class="badge">profile ${esc(ob.workload_profile)}</span>
+    <span class="badge ${ob.cordoned?"provisioning":""}">${ob.cordoned?"cordoned ⊘":"cordon 없음"}</span>
+    <span class="hint">IT ${esc(ob.it_power_kw)} kW · 1차 클릭 후 3초 내 재클릭으로 실행</span>`;
+}
+
+async function execRack(act){
+  if(!selectedRack) return;
+  const a = buildAction(act, $("rc-cap"), $("rc-capu"), $("rc-prof"));
+  const res = $("rc-result");
+  if(a.err){ res.innerHTML = `<span class="badge degraded">${esc(a.err)}</span>`; return; }
+  try{
+    const body = {action:a.action};
+    if(a.params) body.params = a.params;
+    const r = await getJSON(
+      `/emulator/v1/obs/racks/${encodeURIComponent(selectedRack)}/control`,
+      {method:"POST", headers:{"Content-Type":"application/json"},
+       body:JSON.stringify(body)});
+    if(r.state)
+      OBSMAP[r.rack_id||selectedRack] =
+        Object.assign(OBSMAP[r.rack_id||selectedRack]||{rack_id:selectedRack}, r.state);
+    res.innerHTML = `<span class="badge ${r.applied?"ready":"provisioning"}">`
+      + `${esc(a.action)} → ${esc(r.rack_id||selectedRack)} ${r.applied?"applied":"no-op"}</span>`;
+  }catch(e){
+    res.innerHTML = `<span class="badge degraded">실패: ${esc(e.message)}</span>`;
+  }
+  await loadObs();
+  updateRackCtlState();
+  if(activeSection==="cluster") loadCluster();
+}
+
 async function loadCluster(){
   try{
     const [c,g,a] = await Promise.all([
       getJSON("/emulator/v1/cluster"),
       getJSON("/emulator/v1/cluster/racks?site=gasan"),
       getJSON("/emulator/v1/cluster/racks?site=ansan"),
+      loadObs(),
     ]);
+    buildClusterCtl();
     const cs = [
       ["Sites", (c.sites||[]).length],
       ["Racks", c.racks], ["Hosts", c.trays],
@@ -778,6 +1025,13 @@ async function loadCluster(){
     $("cluster-stats").innerHTML = cs.map(([k,v])=>
       `<div class="stat"><div class="k">${esc(k)}</div><div class="v ${k==='GPU'?'green':''}">${esc(v)}</div></div>`
     ).join("");
+    const sm = obsSummary, chips = [];
+    if(sm){
+      if(sm.racks_off) chips.push(`<span class="suchip" style="color:var(--red);border-color:#4a2530"><b>${esc(sm.racks_off)}</b> racks off</span>`);
+      if(sm.racks_cordoned) chips.push(`<span class="suchip" style="color:var(--amber);border-color:#4a4020"><b>${esc(sm.racks_cordoned)}</b> cordoned</span>`);
+      if(sm.racks_capped) chips.push(`<span class="suchip" style="color:#5aa7e8;border-color:#2a4868"><b>${esc(sm.racks_capped)}</b> power capped</span>`);
+    }
+    $("cluster-obs-chips").innerHTML = chips.join("");
 
     const groups = [
       {site_id:"gasan", site:(c.sites&&c.sites[0]&&c.sites[0].site)||"가산", racks:g.racks||[]},
@@ -804,13 +1058,26 @@ async function loadCluster(){
             + (tcount?` · ${esc(tcount)} w/ tenants`:``) + `</span></div>
           <div class="rack-tiles">`
           + rs.map(r=>{
-            const cls = rackStateCls(r);
+            const ob = OBSMAP[r.rack_id]||{};
+            const off = ob.power_state==="off";
+            const mixed = ob.power_state==="mixed";
+            const capped = ob.power_cap_kw!=null;
+            const cord = !!ob.cordoned;
+            const cls = rackStateCls(r)
+              + (off?" off":"") + (mixed?" mixed":"")
+              + (capped?" capped":"") + (cord?" cord":"");
             const t = (r.tenants||[]).length;
+            const title = `${r.rack_id} · ${r.state} · ${t} tenant(s)`
+              + ` · power ${ob.power_state||"on"}`
+              + (capped?` · cap ${ob.power_cap_kw}kW`:"")
+              + (cord?` · cordoned`:"")
+              + (ob.workload_profile?` · ${ob.workload_profile}`:"");
             return `<div class="rtile ${cls}" data-rack="${esc(r.rack_id)}"`
-              + ` title="${esc(r.rack_id)} · ${esc(r.state)} · ${esc(t)} tenant(s)">`
+              + ` title="${esc(title)}">`
               + (t?`<span class="tdot"></span>`:``)
+              + (cord?`<span class="cmark">⊘</span>`:``)
               + `<span class="rn">${esc(rackNum(r.rack_id))}</span>`
-              + `<span class="rg">${esc(r.gpus)}g</span></div>`;
+              + `<span class="rg">${off?"OFF":esc(r.gpus)+"g"}</span></div>`;
           }).join("")
           + `</div></div>`;
       });
@@ -832,7 +1099,11 @@ async function loadRack(){
   await buildRackPicker("rack-picker");
   if(!selectedRack){ $("rack").innerHTML = `<div class="hint">no rack selected</div>`; return; }
   try{
-    const rk = await getJSON("/emulator/v1/cluster/racks/"+encodeURIComponent(selectedRack));
+    const [rk] = await Promise.all([
+      getJSON("/emulator/v1/cluster/racks/"+encodeURIComponent(selectedRack)),
+      loadObs(),
+    ]);
+    buildRackCtl();
     const trays = rk.tray_detail||[];
     $("rack-count").textContent = trays.length;
     const meta = $("rack-picker-meta");
