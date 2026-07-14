@@ -323,7 +323,7 @@
 
 <nav class="tabs" id="tabs">
   <button data-sec="sites" class="primary active">Site Controllers</button>
-  <button data-sec="cluster">Cluster</button>
+  <button data-sec="cluster">Twin Control</button>
   <button data-sec="rack">Rack</button>
   <button data-sec="fabric">Fabric</button>
   <button data-sec="storage">Storage</button>
@@ -352,11 +352,20 @@
     </div>
   </section>
 
-  <!-- CLUSTER -->
+  <!-- CLUSTER / TWIN CONTROL -->
   <section class="view" id="view-cluster">
+    <div class="sub-sec">
+      <h2 style="font-size:15px">NVIDIA Vera Rubin NVL72 — Digital Twin Control
+        <span class="hint">— 전체 클러스터 140랙 설정·제어 (power / cap / workload / cordon) · 실텔레메트리 반영</span></h2>
+    </div>
     <div class="sub-sec">
       <h2>전체 랙 제어 — 데모 <span class="hint">— 범위 일괄 제어 (power / cap / workload / cordon) · 1차 클릭 후 3초 내 재클릭으로 실행 (2단계 확인)</span></h2>
       <div id="cluster-ctl" class="card"><div class="hint">loading…</div></div>
+    </div>
+    <div class="sub-sec">
+      <h2>적용된 랙 설정 <span class="count" id="ctlset-count">0</span>
+        <span class="hint">— 기본값(on · uncap · steady · uncordon)과 다른 랙 · 행별 즉시 해제</span></h2>
+      <div class="tbl-wrap"><table id="ctlset-table"></table></div>
     </div>
     <div class="sub-sec">
       <h2>Cluster Fleet <span class="hint">— all racks across both NICo sites · click a rack to drill into its 18 trays</span></h2>
@@ -1008,6 +1017,51 @@ async function execRack(act){
   if(activeSection==="cluster") loadCluster();
 }
 
+// ── Digital Twin Control: 적용된 랙 설정 테이블 (기본값과 다른 랙만) ──
+function renderCtlSettings(){
+  const tbl = document.getElementById("ctlset-table");
+  const cnt = document.getElementById("ctlset-count");
+  if(!tbl) return;
+  const rows = (obsRacks||[]).filter(r =>
+    (r.power_state && r.power_state !== "on") || r.power_cap_kw ||
+    r.cordoned || (r.workload_profile && r.workload_profile !== "steady"));
+  if(cnt) cnt.textContent = rows.length;
+  if(!rows.length){
+    tbl.innerHTML = `<tr><td class="hint">기본값과 다른 랙 없음 — 전체 on · uncap · steady · uncordon</td></tr>`;
+    return;
+  }
+  tbl.innerHTML =
+    `<tr><th>Rack</th><th>Site / SU</th><th>Power</th><th>Cap</th>`+
+    `<th>Profile</th><th>Cordon</th><th class="num">IT kW</th><th>복원</th></tr>`
+    + rows.map(r=>
+      `<tr><td style="font-family:var(--mono)">${esc(r.rack_id)}</td>`+
+      `<td>${esc(r.site)} · ${esc(r.su_id)}</td>`+
+      `<td>${r.power_state!=="on"
+          ? `<span class="badge ${r.power_state==="off"?"crit":"warn"}">${esc(r.power_state)}</span>` : "on"}</td>`+
+      `<td>${r.power_cap_kw ? esc(r.power_cap_kw)+" kW" : "—"}</td>`+
+      `<td>${esc(r.workload_profile||"steady")}</td>`+
+      `<td>${r.cordoned ? '<span class="badge warn">cordoned</span>' : "—"}</td>`+
+      `<td class="num">${esc(r.it_power_kw)}</td>`+
+      `<td><button data-ctlreset="${esc(r.rack_id)}" `+
+      `style="background:none;border:1px solid var(--line);color:var(--green);`+
+      `border-radius:6px;padding:2px 9px;font-size:10px;cursor:pointer">기본값 복원</button></td></tr>`
+    ).join("");
+}
+async function ctlResetRack(rid){
+  const post = b => fetch(`/emulator/v1/obs/racks/${encodeURIComponent(rid)}/control`,
+    {method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(b)});
+  await post({action:"power_on"});
+  await post({action:"power_uncap"});
+  await post({action:"uncordon"});
+  await post({action:"workload",params:{profile:"steady"}});
+  await loadObs();
+  loadCluster();
+}
+document.addEventListener("click", e=>{
+  const b = e.target.closest("[data-ctlreset]");
+  if(b) ctlResetRack(b.dataset.ctlreset);
+});
+
 async function loadCluster(){
   try{
     const [c,g,a] = await Promise.all([
@@ -1032,6 +1086,7 @@ async function loadCluster(){
       if(sm.racks_capped) chips.push(`<span class="suchip" style="color:#5aa7e8;border-color:#2a4868"><b>${esc(sm.racks_capped)}</b> power capped</span>`);
     }
     $("cluster-obs-chips").innerHTML = chips.join("");
+    renderCtlSettings();
 
     const groups = [
       {site_id:"gasan", site:(c.sites&&c.sites[0]&&c.sites[0].site)||"가산", racks:g.racks||[]},
@@ -2127,7 +2182,7 @@ document.addEventListener("keydown",e=>{
     openTrayModal(decodeURIComponent(mt[1])); }, 700);
   else if(mo) setTimeout(()=>{ switchSection("fabric");
     openTopoModal(decodeURIComponent(mo[1])); }, 700);
-  else if(ms) setTimeout(()=>switchSection(ms[1]), 400);
+  else if(ms) setTimeout(()=>switchSection(ms[1]==="control"?"cluster":ms[1]), 400);
 })();
 
 poll();
