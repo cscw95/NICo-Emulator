@@ -261,10 +261,20 @@ class ObsEngine:
                         tray_tenant[d.compute_tray_id] = f.tenant_id
                         break
 
+            # 3b) 트레이 작업(재기동/HW 교체) 진행 중 트레이 — GPU idle +
+            #     원 테넌트 SLO unavail 집계 (trayops 지연 import — 순환 방지)
+            try:
+                from . import trayops as _trayops
+                _trayops.ENGINE.tick()
+                busy_trays = _trayops.ENGINE.busy_trays()
+            except Exception:
+                busy_trays = {}
+
             # 4) materialize — per-GPU + rack aggregate (tick당 1회)
             gpus, by_uuid, rack_agg = [], {}, {}
             tenants: Dict[str, dict] = {}
-            counts = {"total": 0, "active": 0, "idle": 0, "throttled": 0, "faulted": 0}
+            counts = {"total": 0, "active": 0, "idle": 0, "throttled": 0,
+                      "faulted": 0, "off": 0}
             util_sum, util_n = 0.0, 0
             faulted_now: Set[str] = set()
             for rack in STORE.racks.values():
@@ -282,12 +292,15 @@ class ObsEngine:
                 for tid in rack.trays:
                     tray = STORE.trays[tid]
                     tenant = tray_tenant.get(tid)
+                    tray_busy = tid in busy_trays        # 재기동/교체 진행 중
+                    if tray_busy and not tenant:
+                        tenant = busy_trays.get(tid)     # 원 테넌트로 SLO 집계
                     tray_bad = tray.health == "critical" and not rack_off
                     # 부하 대상: 테넌트 할당 또는 워크로드 프로필 지정(데모 부하)
                     loaded = ((tenant is not None or
                                profile in ("steady", "train", "burst"))
                               and not rack_off and not cordoned
-                              and profile != "idle")
+                              and not tray_busy and profile != "idle")
                     ubase = PROFILE_UTIL.get(profile, w["util"]) \
                         if profile else w["util"]
                     for gi in range(GPU_PER_TRAY):
@@ -330,33 +343,45 @@ class ObsEngine:
                             util = round(util * max(0.35, scale), 1)
                             clock = min(clock, 1900.0)
                         temp = min(temp, 97.0)
-                        state = ("faulted" if faulted else
+                        # rack off/restart: in-band(DCGM) 텔레메트리 수신 불가
+                        # — 판독값 null + state "off" (OOB/DCIM만 가용)
+                        state = ("off" if rack_off else
+                                 "faulted" if faulted else
                                  "throttled" if throttled else
                                  "active" if loaded else "idle")
-                        health = ("critical" if faulted else
+                        health = ("unknown" if rack_off else
+                                  "critical" if faulted else
                                   "warning" if throttled else "ok")
-                        reasons = (["thermal"] if throttled else []) \
-                            + (["power_cap"] if capped else [])
+                        reasons = ([] if rack_off else
+                                   (["thermal"] if throttled else [])
+                                   + (["power_cap"] if capped else []))
                         rec = {
                             "gpu_uuid": uuid, "idx": gi, "tray_id": tid,
                             "rack_id": rack.rack_id, "su_id": rack.su_id,
                             "site": rack.site_id, "tenant_id": tenant,
-                            "util_pct": round(util, 1),
-                            "sm_util_pct": round(max(0.0, util - r.uniform(0, 6)), 1),
-                            "mem_used_gb": round(mem, 1), "mem_total_gb": GPU_MEM_GB,
-                            "temp_c": round(temp, 1), "mem_temp_c": round(temp + 8, 1),
-                            "power_w": round(power),
+                            "util_pct": None if rack_off else round(util, 1),
+                            "sm_util_pct": None if rack_off else
+                                round(max(0.0, util - r.uniform(0, 6)), 1),
+                            "mem_used_gb": None if rack_off else round(mem, 1),
+                            "mem_total_gb": GPU_MEM_GB,
+                            "temp_c": None if rack_off else round(temp, 1),
+                            "mem_temp_c": None if rack_off else
+                                round(temp + 8, 1),
+                            "power_w": None if rack_off else round(power),
                             "power_limit_w": round(cap_w if cap_w else
                                                    GPU_POWER_LIMIT_W),
-                            "sm_clock_mhz": round(clock),
+                            "sm_clock_mhz": None if rack_off else round(clock),
                             "throttle_reasons": reasons,
                             "ecc_corr": h % 5 + tick // 40,
                             "ecc_uncorr": 1 if gpu_xid else 0,
                             "xid_recent": xids,
-                            "nvlink_tx_gbps": round(nvl, 1),
-                            "nvlink_rx_gbps": round(nvl * 0.93, 1),
+                            "nvlink_tx_gbps": None if rack_off else
+                                round(nvl, 1),
+                            "nvlink_rx_gbps": None if rack_off else
+                                round(nvl * 0.93, 1),
                             "pcie_replay": h % 3,
                             "health": health, "state": state,
+                            "telemetry_source": "none" if rack_off else "dcgm",
                         }
                         gpus.append(rec)
                         by_uuid[uuid] = rec
@@ -369,8 +394,9 @@ class ObsEngine:
                             faulted_now.add(uuid)
                         if tenant:
                             alloc += 1
-                            util_sum += util
-                            util_n += 1
+                            if not rack_off:             # 가동 GPU 기준 평균
+                                util_sum += util
+                                util_n += 1
                             rack_tenants.add(tenant)
                             t = tenants.setdefault(tenant, {
                                 "contracted": 0, "unavail": 0,
@@ -378,7 +404,8 @@ class ObsEngine:
                             t["contracted"] += 1
                             if throttled:
                                 t["throttled"] += 1
-                            if throttled or faulted or rack_off or cordoned:
+                            if throttled or faulted or rack_off or cordoned \
+                                    or tray_busy:
                                 t["unavail"] += 1
                                 if offset > 3.0 and not (rack_off or cordoned):
                                     t["cooling_unavail"] += 1
@@ -420,6 +447,8 @@ class ObsEngine:
                 ctl = agg["ctl"]
                 rack_views.append({
                     "rack_id": rid, "su_id": agg["su_id"], "site": agg["site"],
+                    # off 랙은 in-band 유실 — BMC/DCIM OOB 판독만 가용
+                    "telemetry_source": "oob" if agg["off"] else "inband",
                     "it_power_kw": round(agg["it_kw"], 1),
                     "gpu_power_kw": round(agg["gpu_kw"], 1),
                     "inlet_c": round(inlet, 1),
@@ -630,6 +659,7 @@ class ObsEngine:
                           "state": "resolved" if f.get("resolved") else "firing"})
         items.extend(_fabric_alerts())
         items.extend(_storage_alerts())
+        items.extend(_trayops_alerts())
         items.sort(key=lambda a: (a["state"] != "firing", a["at"]), reverse=False)
         items.sort(key=lambda a: a["at"], reverse=True)
         items.sort(key=lambda a: a["state"] != "firing")
@@ -684,6 +714,16 @@ def _fabric_alerts() -> List[dict]:
     except Exception:
         pass                                    # fabric 에뮬레이터 미가용 시 무시
     return out
+
+
+def _trayops_alerts() -> List[dict]:
+    """트레이 재기동/HW 교체 작업 알림(domain 'trayops') merge —
+    /emulator/v1/faults 피드로도 전파된다 (provisioning.faults가 이 목록 사용)."""
+    try:
+        from . import trayops as _trayops
+        return _trayops.ENGINE.alerts_for_obs()
+    except Exception:
+        return []
 
 
 def _storage_alerts() -> List[dict]:
@@ -757,15 +797,17 @@ def summary():
 
 # ── 2-3) DCGM plane ───────────────────────────────────────────────────
 def _gpu_attn(g: dict) -> bool:
-    """운영 콘솔 '예외만' 판정과 동일한 서버측 기준."""
+    """운영 콘솔 '예외만' 판정과 동일한 서버측 기준 (off = 판독 없음 → 제외)."""
+    if g["state"] == "off":
+        return False
     return (g["state"] in ("faulted", "throttled") or g["temp_c"] >= 78.0
             or g["ecc_uncorr"] > 0 or g["pcie_replay"] >= 3)
 
 
-_GPU_SORT = {
-    "temp": lambda g: -g["temp_c"],
-    "util": lambda g: -g["util_pct"],
-    "power": lambda g: -g["power_w"],
+_GPU_SORT = {                          # off GPU(null 판독)는 최하위 정렬
+    "temp": lambda g: -(g["temp_c"] if g["temp_c"] is not None else -273.0),
+    "util": lambda g: -(g["util_pct"] if g["util_pct"] is not None else -1.0),
+    "power": lambda g: -(g["power_w"] if g["power_w"] is not None else -1),
     "ecc": lambda g: -(g["ecc_uncorr"] * 1000 + g["ecc_corr"]),
 }
 
@@ -809,9 +851,12 @@ def dcgm_su_summary(site: Optional[str] = None):
                 continue
             s = sus.setdefault(g["su_id"], {
                 "su_id": g["su_id"], "site": g["site"], "gpus": 0,
-                "active": 0, "throttled": 0, "faulted": 0,
-                "_util": 0.0, "max_temp_c": 0.0, "ecc_uncorr": 0})
+                "active": 0, "throttled": 0, "faulted": 0, "off": 0,
+                "_util": 0.0, "_n": 0, "max_temp_c": 0.0, "ecc_uncorr": 0})
             s["gpus"] += 1
+            if g["state"] == "off":       # in-band 판독 없음 — 집계 제외
+                s["off"] += 1
+                continue
             if g["state"] in ("active", "throttled", "faulted"):
                 s["active"] += 1
             if g["state"] == "throttled":
@@ -819,14 +864,15 @@ def dcgm_su_summary(site: Optional[str] = None):
             if g["state"] == "faulted":
                 s["faulted"] += 1
             s["_util"] += g["util_pct"]
+            s["_n"] += 1
             s["max_temp_c"] = max(s["max_temp_c"], g["temp_c"])
             s["ecc_uncorr"] += g["ecc_uncorr"]
             uh[min(9, int(g["util_pct"] // 10))] += 1
             th[min(9, max(0, int((g["temp_c"] - 20) // 8)))] += 1
         out = []
         for s in sorted(sus.values(), key=lambda x: int(x["su_id"].split("-")[1])):
-            s["avg_util_pct"] = round(s["_util"] / max(1, s["gpus"]), 1)
-            del s["_util"]
+            s["avg_util_pct"] = round(s["_util"] / max(1, s["_n"]), 1)
+            del s["_util"], s["_n"]
             out.append(s)
         return {"sus": out,
                 "hist": {"util_buckets": uh, "temp_buckets": th,

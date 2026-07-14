@@ -122,6 +122,8 @@ class ComputeTray:
     lifecycle_state: str = "Ready"       # Discovered|Provisioning|Ready|Degraded
     health: str = "ok"
     dpu_id: str = ""
+    serial: str = ""                     # HW 시리얼 — HW 교체(trayops) 시 갱신
+    mac_address: str = ""                # host NIC MAC — HW 교체 시 갱신
 
 
 @dataclass
@@ -195,7 +197,10 @@ class Store:
                             did = f"{tid}-dpu-0"
                             self.trays[tid] = ComputeTray(
                                 tray_id=tid, rack_id=rack_id, site=site["name"],
-                                bmc_ip=f"10.{oct2}.{oct3}.{10 + t}", dpu_id=did)
+                                bmc_ip=f"10.{oct2}.{oct3}.{10 + t}", dpu_id=did,
+                                serial=f"SN-{tid}",
+                                mac_address="52:54:00:%02x:%02x:%02x" % (
+                                    oct2 & 0xff, oct3 & 0xff, (10 + t) & 0xff))
                             dpu = Dpu(dpu_id=did, compute_tray_id=tid,
                                       bmc_ip=f"10.{oct2}.{oct3}.{40 + t}")
                             for pf in (0, 1):

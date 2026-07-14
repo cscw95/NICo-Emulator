@@ -17,18 +17,43 @@ def _first_rack_id():
     return next(iter(STORE.racks))
 
 
-def test_power_off_zeroes_gpus_and_marks_rack():
+def test_power_off_nulls_dcgm_and_marks_rack_oob():
+    """rack off = in-band(DCGM) 텔레메트리 유실 — 판독값 null·state off,
+    랙 뷰는 OOB(BMC/DCIM) 소스로만 유지(대기전력·inlet)."""
     rid = _first_rack_id()
     r = client.post(f"{OBS}/racks/{rid}/control", json={"action": "power_off"})
     assert r.status_code == 200 and r.json()["state"]["power_state"] == "off"
     view = _rack(rid)
     assert view["power_state"] == "off"
-    assert view["it_power_kw"] < 1.0
+    assert view["it_power_kw"] < 1.0            # 대기전력 — OOB로 유지
+    assert view["telemetry_source"] == "oob"
     gpus = client.get(f"{OBS}/dcgm/gpus", params={"rack": rid, "limit": 5}).json()
-    assert all(g["power_w"] == 0 and g["util_pct"] == 0 for g in gpus["gpus"])
-    # 원복
+    assert gpus["gpus"], "rack filter returned no GPUs"
+    for g in gpus["gpus"]:
+        assert g["state"] == "off" and g["health"] == "unknown"
+        assert g["telemetry_source"] == "none"
+        for k in ("power_w", "util_pct", "sm_util_pct", "temp_c", "mem_temp_c",
+                  "sm_clock_mhz", "mem_used_gb", "nvlink_tx_gbps",
+                  "nvlink_rx_gbps"):
+            assert g[k] is None, k
+        assert g["throttle_reasons"] == []
+    # state=off 필터 동작 + summary off 카운트
+    off = client.get(f"{OBS}/dcgm/gpus",
+                     params={"rack": rid, "state": "off", "limit": 5}).json()
+    assert off["total"] == 72
+    s = client.get(f"{OBS}/summary").json()
+    assert s["gpus"]["off"] >= 72
+    su = next(x for x in client.get(f"{OBS}/dcgm/su-summary").json()["sus"]
+              if x["su_id"] == view["su_id"])
+    assert su["off"] >= 72
+    # 원복 → 정상 판독 복원
     client.post(f"{OBS}/racks/{rid}/control", json={"action": "power_on"})
     assert _rack(rid)["power_state"] == "on"
+    assert _rack(rid)["telemetry_source"] == "inband"
+    gpus2 = client.get(f"{OBS}/dcgm/gpus", params={"rack": rid, "limit": 5}).json()
+    for g in gpus2["gpus"]:
+        assert g["telemetry_source"] == "dcgm" and g["state"] != "off"
+        assert g["power_w"] is not None and g["util_pct"] is not None
 
 
 def test_bulk_power_cap_sets_throttle_reason():

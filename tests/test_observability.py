@@ -23,7 +23,8 @@ def _attach(client, dpu, tenant):
 
 def test_summary_shape(client):
     s = client.get("/emulator/v1/obs/summary").json()
-    assert set(s["gpus"]) == {"total", "active", "idle", "throttled", "faulted"}
+    assert set(s["gpus"]) == {"total", "active", "idle", "throttled",
+                              "faulted", "off"}
     assert s["gpus"]["total"] == len(STORE.trays) * GPU_PER_TRAY
     for k in ("avg_util_pct", "it_power_mw", "cooling", "racks",
               "tenants", "alerts_open", "slo"):

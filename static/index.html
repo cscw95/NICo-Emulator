@@ -425,17 +425,22 @@
     </div>
     <div class="sub-sec">
       <h2>UFM — InfiniBand <span class="count" id="ufm-count">0</span>
-        <span class="hint" id="ufm-health">— Quantum-X800 개별 스위치 · UFM Enterprise 에뮬레이션</span></h2>
+        <span class="hint" id="ufm-health">— Quantum-X800 개별 스위치 · UFM Enterprise 에뮬레이션</span>
+        <span class="hint">· 행별 장애 주입 — 데모 (1차 클릭 후 3초 내 재클릭)</span>
+        <span class="ctl-warn" id="ufm-warn"></span></h2>
       <div class="tbl-wrap"><table id="ufm-table"></table></div>
     </div>
     <div class="sub-sec">
       <h2>NetQ — Ethernet <span class="count" id="netq-count">0</span>
-        <span class="hint" id="netq-val">— Spectrum-X SN5600 · NetQ validation</span></h2>
+        <span class="hint" id="netq-val">— Spectrum-X SN5600 · NetQ validation</span>
+        <span class="hint">· 행별 장애 주입 — 데모</span>
+        <span class="ctl-warn" id="netq-warn"></span></h2>
       <div class="tbl-wrap"><table id="netq-table"></table></div>
     </div>
     <div class="sub-sec">
       <h2>Converged Network <span class="count" id="conv-count">0</span>
-        <span class="hint">— 스토리지·관리 N-S converged rail · CX-9 dual-port + BF-4 · Spectrum-X storage fabric</span></h2>
+        <span class="hint">— 스토리지·관리 N-S converged rail · CX-9 dual-port + BF-4 · Spectrum-X storage fabric · 사이트별 장애 주입 — 데모</span>
+        <span class="ctl-warn" id="conv-warn"></span></h2>
       <div class="stats" id="conv-stats"></div>
       <div class="tbl-wrap" style="margin-top:10px"><table id="conv-table"></table></div>
     </div>
@@ -445,7 +450,8 @@
   <section class="view" id="view-storage">
     <div class="sub-sec">
       <h2>VAST Clusters <span class="count" id="vast-count">0</span>
-        <span class="hint">— 사이트별 AI Storage 1식 · DASE(CBox/DBox) · VMS 에뮬레이션</span></h2>
+        <span class="hint">— 사이트별 AI Storage 1식 · DASE(CBox/DBox) · VMS 에뮬레이션 · 카드별 장애 주입 — 데모</span>
+        <span class="ctl-warn" id="vast-warn"></span></h2>
       <div class="instances" id="vast-clusters"></div>
     </div>
     <div class="sub-sec">
@@ -492,6 +498,13 @@
     <div class="sub-sec">
       <h2>DHCP Leases <span class="count" id="lease-count">0</span></h2>
       <div class="tbl-wrap"><table id="lease-table"></table></div>
+    </div>
+    <div class="sub-sec">
+      <h2>트레이 작업 — 재기동 · HW 교체 <span class="count" id="tops-count">0</span>
+        <span class="hint">— tick(2.5s)당 1단계 · tenant rejoin · KPI(MTTR) · 트레이 팝업에서 실행 — 데모</span></h2>
+      <div class="breakdown" id="tops-kpi" style="margin-bottom:10px"></div>
+      <div id="tops-inflight"></div>
+      <div class="tbl-wrap" style="margin-top:10px"><table id="tops-history"></table></div>
     </div>
   </section>
 
@@ -844,6 +857,39 @@ function confirmThen(btn, warnEl, warnText, fn){
   btn.classList.add("armed");
   if(warnEl) warnEl.textContent = warnText||"";
   ARMED[key] = setTimeout(()=>disarmBtn(btn, warnEl), 3000);
+}
+
+// ── 장비별 개별 장애 주입/복구 (데모) — UFM/NetQ/VAST/Converged 공통 ──
+const FAULT_WARN = "주의(데모): 장애 주입 — 해당 장비 텔레메트리·알림에 즉시 반영됩니다. 3초 내 재클릭 시 실행.";
+function faultBtn(api, kind, target, label, danger){
+  return `<button class="sm ${danger?"dgr":"ghost"}" data-fault="${esc(api)}"`
+    + ` data-kind="${esc(kind)}" data-target="${esc(target)}"`
+    + ` data-akey="f:${esc(api)}:${esc(kind)}:${esc(target)}">${esc(label)}</button>`;
+}
+function wireFaultBtns(rootSel, warnId, refresh){
+  document.querySelectorAll(rootSel+" button[data-fault]").forEach(b=>{
+    if(b.dataset.wired) return;
+    b.dataset.wired = "1";
+    b.addEventListener("click",()=>{
+      confirmThen(b, $(warnId), FAULT_WARN, ()=>execDeviceFault(
+        b.dataset.fault, b.dataset.kind, b.dataset.target, warnId, refresh));
+    });
+  });
+}
+async function execDeviceFault(api, kind, target, warnId, refresh){
+  const w = $(warnId);
+  try{
+    const path = kind==="recover" ? "recover" : "inject";
+    const body = kind==="recover" ? {target} : {kind, target};
+    const r = await getJSON(`/${api}/v1/faults/${path}`,
+      {method:"POST", headers:{"Content-Type":"application/json"},
+       body:JSON.stringify(body)});
+    if(w) w.textContent = kind==="recover"
+      ? `복구 (데모): ${((r.recovered||[]).join(", "))||"대상 없음"}`
+      : `주입 (데모): ${kind} → ${r.target||target}`;
+  }catch(e){ if(w) w.textContent = "실패: "+e.message; }
+  if(refresh) refresh();          // 실행 직후 해당 테이블/카드 즉시 갱신
+  loadEvents();
 }
 
 function buildAction(act, capEl, capuEl, profEl){
@@ -1312,6 +1358,7 @@ async function loadFabric(){
 
 // ── Converged Network (스토리지·관리 N-S rail) — Fabric 탭 하단 ───────
 async function loadConverged(){
+  if(Object.keys(ARMED).length) return;   // 2단계 확인 중 재렌더 방지
   const stCls = s => s==="ok"||s==="active" ? "ready"
     : s==="degraded" ? "warn" : "crit";
   const [ov, pth] = await Promise.all([
@@ -1326,8 +1373,14 @@ async function loadConverged(){
         <span class="badge ${stCls(s.state)}">${esc(s.state)}</span>
         storage ${esc(sp.active)}/${esc(sp.total)} · mgmt ${esc(mp.active)}/${esc(mp.total)}</div>
       <div class="k" style="margin-top:4px">VNI seg ${esc(s.vni_segments)} · oversub ${esc(s.oversub_ratio)}:1 · ${esc(s.nic)} + ${esc(s.dpu)}</div>
+      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+        ${faultBtn("converged","path_degrade",s.site,"path degrade")}
+        ${faultBtn("converged","storage_congestion",s.site,"congestion",true)}
+        ${faultBtn("converged","recover",s.site,"recover")}
+      </div>
     </div>`;
   }).join("") || `<div class="hint">converged overview unavailable</div>`;
+  wireFaultBtns("#conv-stats","conv-warn",()=>loadConverged());
   const rows = pth.paths||[];
   $("conv-count").textContent = rows.length;
   $("conv-table").innerHTML =
@@ -1346,6 +1399,7 @@ async function loadConverged(){
 
 // ── STORAGE (VAST Data VMS) ───────────────────────────────────────────
 async function loadStorage(){
+  if(Object.keys(ARMED).length) return;   // 2단계 확인 중 재렌더 방지
   const stCls = s => s==="HEALTHY"||s==="active" ? "ready"
     : s==="DEGRADED"||s==="degraded" ? "warn" : "crit";
   try{
@@ -1385,8 +1439,17 @@ async function loadStorage(){
           · cache ${esc(perf.cache_hit_pct==null?"—":perf.cache_hit_pct)}%
           · clients ${esc(perf.active_clients==null?"—":perf.active_clients)}
           ${c.failed_drives?` · <b style="color:var(--amber)">failed drives ${esc(c.failed_drives)}</b>`:""}</div>
+        <div class="mact" style="margin:10px 0 0">
+          ${faultBtn("vast","nvme_drive_fail",c.name,"drive fail")}
+          ${faultBtn("vast","cbox_down",c.name,"cbox down",true)}
+          ${faultBtn("vast","latency_spike",c.name,"latency spike")}
+          ${faultBtn("vast","capacity_pressure",c.name,"capacity")}
+          ${faultBtn("vast","recover",c.name,"recover")}
+          <span class="hint">장애 주입 — 데모</span>
+        </div>
       </div>`;
     }).join("") || `<div class="hint">no VAST clusters</div>`;
+    wireFaultBtns("#vast-clusters","vast-warn",()=>loadStorage());
 
     const views = vw.views||[];
     $("vv-count").textContent = views.length;
@@ -1431,6 +1494,7 @@ async function loadStorage(){
 
 // ── UFM(IB)·NetQ(Ethernet) 개별 스위치 에뮬레이터 ─────────────────────
 async function loadUfmNetq(){
+  if(Object.keys(ARMED).length) return;   // 2단계 확인 중 재렌더 방지
   const stCls = s => s==="ok"||s==="up" ? "ready"
     : s==="degraded"||s==="warn" ? "warn" : "crit";
   const [uSys, uHealth, nSw, nVal] = await Promise.all([
@@ -1447,14 +1511,20 @@ async function loadUfmNetq(){
     + ` · flaps(24h) ${esc(uHealth.flaps_24h)} · score ${esc(uHealth.score)}`;
   $("ufm-table").innerHTML =
     `<tr><th>Switch</th><th>Type</th><th>Plane</th><th>Site / SU</th><th>Model · FW</th>`
-    + `<th class="num">Ports</th><th class="num">Temp</th><th>State</th></tr>`
+    + `<th class="num">Ports</th><th class="num">Temp</th><th>State</th><th>제어 (데모)</th></tr>`
     + systems.map(s=>
       `<tr><td style="font-family:var(--mono)">${esc(s.name)}</td><td>${esc(s.type)}</td>`
       + `<td>${esc(s.plane)}</td><td>${esc(s.site)}${s.su_id? " · "+esc(s.su_id):""}</td>`
       + `<td>${esc(s.model)} · ${esc(s.fw)}</td>`
       + `<td class="num">${esc(s.ports_active)}/${esc(s.ports_total)}</td>`
       + `<td class="num">${esc(s.temperature_c)}°C</td>`
-      + `<td><span class="badge ${stCls(s.state)}">${esc(s.state)}</span></td></tr>`).join("");
+      + `<td><span class="badge ${stCls(s.state)}">${esc(s.state)}</span></td>`
+      + `<td style="white-space:nowrap">`
+      + faultBtn("ufm","switch_down",s.guid,"switch down",true)
+      + faultBtn("ufm","port_flap",s.name,"port flap")
+      + faultBtn("ufm","link_degrade",s.name,"link degrade")
+      + faultBtn("ufm","recover",s.name,"recover")
+      + `</td></tr>`).join("");
   const nsw = nSw.switches||[];
   $("netq-count").textContent = nsw.length;
   const checks = nVal.checks||[];
@@ -1463,13 +1533,21 @@ async function loadUfmNetq(){
     + ` title="${esc(c.detail||"")}">${esc(c.check)} ${esc(c.result)}</span>`).join(" ");
   $("netq-table").innerHTML =
     `<tr><th>Switch</th><th>Role</th><th>Site / SU</th><th>Model</th>`
-    + `<th class="num">If up</th><th class="num">Temp</th><th>State</th></tr>`
+    + `<th class="num">If up</th><th class="num">Temp</th><th>State</th><th>제어 (데모)</th></tr>`
     + nsw.map(s=>
       `<tr><td style="font-family:var(--mono)">${esc(s.name)}</td><td>${esc(s.role)}</td>`
       + `<td>${esc(s.site)}${s.su_id? " · "+esc(s.su_id):""}</td><td>${esc(s.model)}</td>`
       + `<td class="num">${esc(s.interfaces_up)}/${esc(s.interfaces_total)}</td>`
       + `<td class="num">${esc(s.temperature_c)}°C</td>`
-      + `<td><span class="badge ${stCls(s.state)}">${esc(s.state)}</span></td></tr>`).join("");
+      + `<td><span class="badge ${stCls(s.state)}">${esc(s.state)}</span></td>`
+      + `<td style="white-space:nowrap">`
+      + faultBtn("netq","bgp_flap",s.name,"bgp flap")
+      + faultBtn("netq","link_down",s.name,"link down")
+      + faultBtn("netq","pfc_storm",s.name,"pfc storm",true)
+      + faultBtn("netq","recover",s.name,"recover")
+      + `</td></tr>`).join("");
+  wireFaultBtns("#ufm-table","ufm-warn",()=>loadUfmNetq());
+  wireFaultBtns("#netq-table","netq-warn",()=>loadUfmNetq());
 }
 
 // ── SITE FABRIC SECTIONS + IB 토폴로지 구성 뷰 팝업 (요청 2) ──────────
@@ -1848,6 +1926,7 @@ function renderProvRows(){
 }
 
 async function loadProvisioning(){
+  loadTrayOps();                             // 트레이 작업 패널은 항상 갱신
   if(Object.keys(provBusy).length) return;   // don't clobber an in-flight walk
   await buildProvBar();
   if(!selectedRack){ $("prov-table").innerHTML = `<div class="hint">no rack selected</div>`; return; }
@@ -1920,7 +1999,7 @@ function stepperHTML(boot){
 const kvi = (k,v)=>`<div class="kvi"><span class="kk">${esc(k)}</span>`
   + `<span class="vv">${esc(v==null||v===""?"—":v)}</span></div>`;
 
-function renderTrayModal(d){
+function renderTrayModal(d, op){
   const t = d.tray, dp = d.dpu, ip = d.ip_allocation, boot = d.boot;
   $("tm-title").textContent = t.tray_id;
   $("tm-badges").innerHTML =
@@ -1949,11 +2028,15 @@ function renderTrayModal(d){
         ${kvi("Power", t.power_state)}${kvi("Health", t.health)}
         ${kvi("Lifecycle", t.lifecycle_state)}${kvi("GPUs", t.gpus)}
         ${kvi("Tenant", (t.tenants||[]).join(", ")||"—")}${kvi("BMC IP", t.bmc_ip)}
+        ${kvi("Serial", t.serial)}${kvi("Host MAC", t.mac)}
       </div>
       <div class="mact">
         ${powerBtn}
         <button class="sm" id="tm-reprov">재프로비저닝</button>
-        <span class="hint" id="tm-msg"></span>
+        <button class="sm ghost" id="tm-reboot" data-akey="tm:reboot">재기동</button>
+        <button class="sm dgr" id="tm-replace" data-akey="tm:replace">HW 교체</button>
+        <span class="hint">(데모 · 2단계 확인)</span>
+        <span class="ctl-warn" id="tm-msg"></span>
       </div>
       <h2 style="margin:14px 0 8px">DPU 기반 IP 할당</h2>
       <div class="kv" style="grid-template-columns:1fr">
@@ -1971,11 +2054,17 @@ function renderTrayModal(d){
       </table></div>
     </div>
     <div>
-      <h2 style="margin-bottom:8px">OS 설치 / 부트 단계</h2>
-      <div class="hint" style="margin-bottom:12px">boot_stage
-        <b style="color:var(--text)">${esc(boot.boot_stage)}</b>
-        · boot_source ${esc(boot.boot_source)} (${esc(boot.boot_enabled)})</div>
-      ${stepperHTML(boot)}
+      ${op
+        ? `<h2 style="margin-bottom:8px">트레이 작업 진행 — ${esc(op.op==="reboot"?"재기동":"HW 교체")}
+             <span class="count">${esc(op.stage_idx+1)}/${esc(op.stages.length)}</span></h2>
+           <div class="hint" style="margin-bottom:12px">op <b style="color:var(--text)">${esc(op.op)}</b>
+             · tenant ${esc(op.tenant_id||"—")} · 경과 ${esc(op.elapsed_s)}s · tick당 1단계</div>
+           ${opStepsHTML(op)}`
+        : `<h2 style="margin-bottom:8px">OS 설치 / 부트 단계</h2>
+           <div class="hint" style="margin-bottom:12px">boot_stage
+             <b style="color:var(--text)">${esc(boot.boot_stage)}</b>
+             · boot_source ${esc(boot.boot_source)} (${esc(boot.boot_enabled)})</div>
+           ${stepperHTML(boot)}`}
       <div class="hint" style="margin-top:14px;font-family:var(--mono);word-break:break-all">
         bootfile: ${esc(boot.bootfile_url)}<br>image: ${esc(boot.image_url)}</div>
     </div>
@@ -1984,9 +2073,31 @@ function renderTrayModal(d){
   if(pb) pb.addEventListener("click",()=>tmPower(pb.getAttribute("data-rt")));
   const rb = $("tm-reprov");
   if(rb){
-    if(provBusy[t.tray_id]){ rb.disabled = true; rb.textContent = "Provisioning…"; }
-    rb.addEventListener("click",()=>tmReprovision(rb));
+    if(provBusy[t.tray_id] || op){ rb.disabled = true;
+      if(provBusy[t.tray_id]) rb.textContent = "Provisioning…"; }
+    else rb.addEventListener("click",()=>tmReprovision(rb));
   }
+  [[$("tm-reboot"),"reboot"],[$("tm-replace"),"replace"]].forEach(([b,kind])=>{
+    if(!b) return;
+    if(op){ b.disabled = true; return; }        // 작업 진행 중 재실행 방지
+    b.addEventListener("click",()=>confirmThen(b, $("tm-msg"),
+      "주의(데모): 트레이 "+(kind==="reboot"?"재기동":"HW 교체")
+      + " — 테넌트 GPU가 일시 unavail 됩니다. 3초 내 재클릭 시 실행.",
+      ()=>trayOpStart(t.tray_id, kind)));
+  });
+}
+
+// 트레이 작업(재기동/HW 교체) 단계 스텝퍼 — 팝업 우측
+function opStepsHTML(op){
+  return `<div class="vsteps">` + (op.stages||[]).map(s=>{
+    const cls = s.status==="done" ? "done" : s.status==="running" ? "cur" : "";
+    const tag = s.status==="done"
+      ? "완료"+(s.duration_s!=null?" · "+s.duration_s+"s":"")
+      : s.status==="running" ? "진행 중"
+      : s.status==="skipped" ? "건너뜀 — tenant 없음" : "대기";
+    return `<div class="vstep ${cls}"><span class="sdot"></span>
+      <div><div class="sl">${esc(s.name)}<span class="stag">${esc(tag)}</span></div></div></div>`;
+  }).join("") + `</div>`;
 }
 
 async function openTrayModal(trayId){
@@ -2000,10 +2111,15 @@ async function openTrayModal(trayId){
 
 async function refreshTrayModal(){
   if(!trayModalId) return;
+  if(Object.keys(ARMED).length) return;   // 2단계 확인 중 재렌더 방지
   const id = trayModalId;
   try{
-    const d = await getJSON(`/emulator/v1/provision/${encodeURIComponent(id)}/detail`);
-    if(trayModalId===id) renderTrayModal(d);
+    const [d] = await Promise.all([
+      getJSON(`/emulator/v1/provision/${encodeURIComponent(id)}/detail`),
+      loadTrayOps(),
+    ]);
+    const op = ((TRAYOPS&&TRAYOPS.inflight)||[]).find(o=>o.tray_id===id);
+    if(trayModalId===id) renderTrayModal(d, op);
   }catch(e){
     if(trayModalId===id)
       $("tm-body").innerHTML = `<div class="hint">tray detail unavailable — ${esc(e.message)}</div>`;
@@ -2048,6 +2164,97 @@ async function tmReprovision(btn){
     delete provBusy[id];
     loadEvents();
     if(activeSection==="provisioning") loadProvisioning();
+    if(trayModalId===id) refreshTrayModal();
+  }
+}
+
+// ── 트레이 작업 (재기동·HW 교체) — trayops 수명주기 + KPI (기능 2) ────
+let TRAYOPS = null;               // latest GET /emulator/v1/obs/tray-ops
+const trayOpBusy = {};            // tray_id -> walk polling running
+
+async function loadTrayOps(){
+  try{
+    TRAYOPS = await getJSON("/emulator/v1/obs/tray-ops");
+    renderTrayOps();
+  }catch(e){ /* trayops 미가용 시 패널 유지 */ }
+  return TRAYOPS;
+}
+
+function opBarHTML(o){
+  const pills = (o.stages||[]).map(s=>{
+    let cls = "pstep";
+    if(s.status==="done"||s.status==="skipped") cls += " done";
+    else if(s.status==="running") cls += " cur";
+    return `<span class="${cls}" title="${esc(s.name)} · ${esc(s.status)}`
+      + `${s.duration_s!=null?" · "+esc(s.duration_s)+"s":""}"></span>`;
+  }).join("");
+  return `<span class="pipe">${pills}</span>`
+    + `<span class="stage-txt">${esc(o.stage)} (${esc(o.stage_idx+1)}/${esc(o.stages.length)})</span>`;
+}
+
+function renderTrayOps(){
+  const d = TRAYOPS;
+  if(!d || !$("tops-kpi")) return;
+  const k = d.kpi||{};
+  const infl = d.inflight||[];
+  $("tops-count").textContent = infl.length;
+  $("tops-kpi").innerHTML = [
+    ["ops(24h)", k.ops_24h], ["reboot", k.reboots], ["replace", k.replacements],
+    ["MTTR 평균", (k.avg_total_s==null?"—":k.avg_total_s)+"s"],
+    ["discovery", (k.avg_discovery_s==null?"—":k.avg_discovery_s)+"s"],
+    ["IP 할당", (k.avg_ip_s==null?"—":k.avg_ip_s)+"s"],
+    ["OS 설치", (k.avg_os_install_s==null?"—":k.avg_os_install_s)+"s"],
+    ["rejoin", (k.avg_rejoin_s==null?"—":k.avg_rejoin_s)+"s"],
+    ["rejoin 성공", (k.rejoin_success_pct==null?"—":k.rejoin_success_pct)+"%"],
+  ].map(([kk,v])=>`<span class="suchip"><b>${esc(v==null?"—":v)}</b> ${esc(kk)}</span>`).join("");
+  $("tops-inflight").innerHTML = infl.length ? infl.map(o=>
+    `<div class="card" style="margin-bottom:8px">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <span style="font-family:var(--mono);color:var(--green)">${esc(o.tray_id)}</span>
+        <span class="badge provisioning">${esc(o.op)}</span>
+        <span class="hint">tenant ${esc(o.tenant_id||"—")} · 경과 ${esc(o.elapsed_s)}s</span>
+        ${opBarHTML(o)}
+      </div></div>`).join("")
+    : `<div class="hint">진행 중인 트레이 작업 없음 — 위 트레이 행 클릭 → 팝업에서 재기동/HW 교체 실행 (데모)</div>`;
+  const hist = d.history||[];
+  $("tops-history").innerHTML =
+    `<tr><th>At</th><th>Tray</th><th>Op</th><th>Tenant</th>`
+    + `<th class="num">Total s</th><th>Rejoin</th><th>결과</th></tr>`
+    + (hist.length ? hist.map(h=>
+      `<tr><td>${esc(h.at)}</td>`
+      + `<td style="font-family:var(--mono)">${esc(trayShort(h.tray_id))}`
+      + `${h.note?` <span class="hint">${esc(h.note)}</span>`:""}</td>`
+      + `<td>${esc(h.op)}</td><td>${esc(h.tenant_id||"—")}</td>`
+      + `<td class="num">${esc(h.total_s)}</td>`
+      + `<td>${(h.stage_durations&&("tenant_rejoin" in h.stage_durations))
+          ? esc(h.stage_durations.tenant_rejoin)+"s"
+          : '<span class="hint">skip</span>'}</td>`
+      + `<td>${h.succeeded?'<span class="badge ready">ok</span>'
+                          :'<span class="badge degraded">fail</span>'}</td></tr>`).join("")
+      : `<tr><td colspan="7" class="hint">트레이 작업 이력 없음</td></tr>`);
+}
+
+async function trayOpStart(id, kind){
+  if(trayOpBusy[id]) return;
+  const msg = $("tm-msg");
+  try{
+    await getJSON(`/emulator/v1/trayops/${encodeURIComponent(id)}/${kind}`,
+      {method:"POST", headers:{"Content-Type":"application/json"}, body:"{}"});
+    if(msg) msg.textContent = (kind==="reboot"?"재기동":"HW 교체")+" 시작 — 단계 진행 중…";
+  }catch(e){ if(msg) msg.textContent = "실패: "+e.message; return; }
+  trayOpBusy[id] = true;
+  try{
+    for(let i=0;i<60;i++){                 // 진행 폴링 — 팝업 스텝퍼 실시간 갱신
+      await sleep(1300);
+      await loadTrayOps();
+      if(trayModalId===id) await refreshTrayModal();
+      const infl = ((TRAYOPS&&TRAYOPS.inflight)||[]).find(o=>o.tray_id===id);
+      if(!infl) break;
+    }
+  }finally{
+    delete trayOpBusy[id];
+    loadEvents();
+    if(activeSection==="provisioning" && !Object.keys(provBusy).length) loadProvisioning();
     if(trayModalId===id) refreshTrayModal();
   }
 }

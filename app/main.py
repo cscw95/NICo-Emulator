@@ -12,6 +12,7 @@ from . import dpu, redfish, provisioning, fabric, scenarios, bridge, sites
 from . import ufm, netq
 from . import vast, converged
 from . import observability
+from . import trayops
 
 STATIC = Path(__file__).parent.parent / "static"
 
@@ -39,6 +40,7 @@ app.include_router(ufm.router)
 app.include_router(netq.router)
 app.include_router(vast.router)
 app.include_router(converged.router)
+app.include_router(trayops.router)
 
 
 @app.get("/healthz")

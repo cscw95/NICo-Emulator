@@ -233,6 +233,7 @@ def provision_detail(tray_id: str):
                 "site": tray.site, "gpus": tray.gpus,
                 "power_state": STORE.power_state(tray), "health": tray.health,
                 "lifecycle_state": tray.lifecycle_state, "bmc_ip": tray.bmc_ip,
+                "serial": tray.serial, "mac": tray.mac_address,
                 "tenants": tenants,
             },
             "dpu": {
