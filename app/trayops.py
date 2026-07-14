@@ -315,19 +315,28 @@ class TrayOpsEngine:
         hist = list(self.history)
         reboots = sum(1 for h in hist if h["op"] == "reboot")
 
-        def avg(name):
-            vals = [h["stage_durations"][name] for h in hist
+        def avg(name, rows=None):
+            rows = hist if rows is None else rows
+            vals = [h["stage_durations"][name] for h in rows
                     if name in h.get("stage_durations", {})]
             return round(sum(vals) / len(vals), 2) if vals else 0.0
+
+        def avg_total(rows):
+            t = [h["total_s"] for h in rows]
+            return round(sum(t) / len(t), 2) if t else 0.0
 
         totals = [h["total_s"] for h in hist]
         rejoin = [h for h in hist
                   if "tenant_rejoin" in h.get("stage_durations", {})]
         ok = sum(1 for h in rejoin if h.get("succeeded"))
+        # 교체(replace) 특화 KPI — HW swap·OS 재설치·재조인
+        rep = [h for h in hist if h["op"] == "replace"]
+        rep_ok = sum(1 for h in rep if h.get("succeeded"))
+        reb = [h for h in hist if h["op"] == "reboot"]
         return {
             "ops_24h": len(hist),
             "reboots": reboots,
-            "replacements": len(hist) - reboots,
+            "replacements": len(rep),
             "avg_discovery_s": avg("nico_discovery"),
             "avg_ip_s": avg("dhcp_ip"),
             "avg_os_install_s": avg("pxe_os_install"),
@@ -336,6 +345,22 @@ class TrayOpsEngine:
                             if totals else 0.0),
             "rejoin_success_pct": (round(100.0 * ok / len(rejoin), 1)
                                    if rejoin else 100.0),
+            # 교체 작업 특화 지표
+            "replace": {
+                "count": len(rep),
+                "avg_drain_s": avg("drain", rep),
+                "avg_hw_swap_s": avg("hw_swap", rep),
+                "avg_discovery_s": avg("nico_discovery", rep),
+                "avg_os_install_s": avg("pxe_os_install", rep),
+                "avg_rejoin_s": avg("tenant_rejoin", rep),
+                "avg_total_s": avg_total(rep),      # 교체 MTTR
+                "success_pct": (round(100.0 * rep_ok / len(rep), 1)
+                                if rep else 100.0),
+            },
+            "reboot": {
+                "count": len(reb),
+                "avg_total_s": avg_total(reb),      # 재기동 MTTR
+            },
         }
 
     def view(self) -> dict:
