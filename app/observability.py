@@ -272,6 +272,7 @@ class ObsEngine:
 
             # 4) materialize — per-GPU + rack aggregate (tick당 1회)
             gpus, by_uuid, rack_agg = [], {}, {}
+            tray_off_seen = []           # (tray_id, tenant, rack_off)
             tenants: Dict[str, dict] = {}
             counts = {"total": 0, "active": 0, "idle": 0, "throttled": 0,
                       "faulted": 0, "off": 0}
@@ -283,6 +284,7 @@ class ObsEngine:
                 offset = c.temp_offset + c.rack_extra.get(rack.rack_id, 0.0)
                 power_sum, thr, flt, alloc = 0.0, 0, 0, 0
                 rack_tenants = set()
+                trays_off_n = 0
                 ctl = self.rack_ctrl.get(rack.rack_id) or _default_ctrl()
                 rack_off = ctl["power"] in ("off", "restart")
                 cordoned = ctl["cordoned"]
@@ -295,11 +297,18 @@ class ObsEngine:
                     tray_busy = tid in busy_trays        # 재기동/교체 진행 중
                     if tray_busy and not tenant:
                         tenant = busy_trays.get(tid)     # 원 테넌트로 SLO 집계
-                    tray_bad = tray.health == "critical" and not rack_off
+                    # 트레이 단위 전원 Off (Redfish 등) — in-band 텔레메트리 유실
+                    tray_off = (not tray_busy
+                                and STORE.power_state(tray) == "Off")
+                    no_ib = rack_off or tray_off
+                    if tray_off:
+                        trays_off_n += 1
+                        tray_off_seen.append((tid, tenant, rack_off))
+                    tray_bad = tray.health == "critical" and not no_ib
                     # 부하 대상: 테넌트 할당 또는 워크로드 프로필 지정(데모 부하)
                     loaded = ((tenant is not None or
                                profile in ("steady", "train", "burst"))
-                              and not rack_off and not cordoned
+                              and not no_ib and not cordoned
                               and not tray_busy and profile != "idle")
                     ubase = PROFILE_UTIL.get(profile, w["util"]) \
                         if profile else w["util"]
@@ -307,7 +316,7 @@ class ObsEngine:
                         uuid = f"GPU-{tid}-g{gi}"
                         h = _crc(uuid)
                         r = random.Random((h * 1000003) ^ (tick * 2654435761))
-                        if rack_off:
+                        if no_ib:
                             util, temp, mem, nvl = 0.0, 26.0 + r.uniform(-1, 1), 0.0, 0.0
                         elif loaded:
                             util = _clamp(ubase + r.uniform(-12, 10), 1.0, 99.0)
@@ -323,7 +332,7 @@ class ObsEngine:
                         gpu_xid = loaded and temp >= XID_TEMP_C and h % 25 == 0
                         faulted = tray_bad or gpu_xid
                         xids = [79] if tray_bad else ([63] if gpu_xid else [])
-                        if rack_off:
+                        if no_ib:
                             power, clock = 0.0, 0.0
                         elif throttled:
                             power = min(GPU_POWER_LIMIT_W,
@@ -336,7 +345,7 @@ class ObsEngine:
                         else:
                             power = max(60.0, GPU_IDLE_POWER_W + r.uniform(-15, 15))
                             clock = 1350.0
-                        capped = bool(cap_w) and not rack_off and power > cap_w
+                        capped = bool(cap_w) and not no_ib and power > cap_w
                         if capped:                       # rack power cap 반영
                             scale = cap_w / power
                             power = cap_w
@@ -345,43 +354,43 @@ class ObsEngine:
                         temp = min(temp, 97.0)
                         # rack off/restart: in-band(DCGM) 텔레메트리 수신 불가
                         # — 판독값 null + state "off" (OOB/DCIM만 가용)
-                        state = ("off" if rack_off else
+                        state = ("off" if no_ib else
                                  "faulted" if faulted else
                                  "throttled" if throttled else
                                  "active" if loaded else "idle")
-                        health = ("unknown" if rack_off else
+                        health = ("unknown" if no_ib else
                                   "critical" if faulted else
                                   "warning" if throttled else "ok")
-                        reasons = ([] if rack_off else
+                        reasons = ([] if no_ib else
                                    (["thermal"] if throttled else [])
                                    + (["power_cap"] if capped else []))
                         rec = {
                             "gpu_uuid": uuid, "idx": gi, "tray_id": tid,
                             "rack_id": rack.rack_id, "su_id": rack.su_id,
                             "site": rack.site_id, "tenant_id": tenant,
-                            "util_pct": None if rack_off else round(util, 1),
-                            "sm_util_pct": None if rack_off else
+                            "util_pct": None if no_ib else round(util, 1),
+                            "sm_util_pct": None if no_ib else
                                 round(max(0.0, util - r.uniform(0, 6)), 1),
-                            "mem_used_gb": None if rack_off else round(mem, 1),
+                            "mem_used_gb": None if no_ib else round(mem, 1),
                             "mem_total_gb": GPU_MEM_GB,
-                            "temp_c": None if rack_off else round(temp, 1),
-                            "mem_temp_c": None if rack_off else
+                            "temp_c": None if no_ib else round(temp, 1),
+                            "mem_temp_c": None if no_ib else
                                 round(temp + 8, 1),
-                            "power_w": None if rack_off else round(power),
+                            "power_w": None if no_ib else round(power),
                             "power_limit_w": round(cap_w if cap_w else
                                                    GPU_POWER_LIMIT_W),
-                            "sm_clock_mhz": None if rack_off else round(clock),
+                            "sm_clock_mhz": None if no_ib else round(clock),
                             "throttle_reasons": reasons,
                             "ecc_corr": h % 5 + tick // 40,
                             "ecc_uncorr": 1 if gpu_xid else 0,
                             "xid_recent": xids,
-                            "nvlink_tx_gbps": None if rack_off else
+                            "nvlink_tx_gbps": None if no_ib else
                                 round(nvl, 1),
-                            "nvlink_rx_gbps": None if rack_off else
+                            "nvlink_rx_gbps": None if no_ib else
                                 round(nvl * 0.93, 1),
                             "pcie_replay": h % 3,
                             "health": health, "state": state,
-                            "telemetry_source": "none" if rack_off else "dcgm",
+                            "telemetry_source": "none" if no_ib else "dcgm",
                         }
                         gpus.append(rec)
                         by_uuid[uuid] = rec
@@ -394,7 +403,7 @@ class ObsEngine:
                             faulted_now.add(uuid)
                         if tenant:
                             alloc += 1
-                            if not rack_off:             # 가동 GPU 기준 평균
+                            if not no_ib:                # 가동 GPU 기준 평균
                                 util_sum += util
                                 util_n += 1
                             rack_tenants.add(tenant)
@@ -417,6 +426,7 @@ class ObsEngine:
                     "thr": thr, "flt": flt, "alloc": alloc,
                     "tenants": rack_tenants, "offset": offset,
                     "ctl": ctl, "off": rack_off,
+                    "trays_off": trays_off_n,
                 }
 
             # 5) CDU derived values — 물리 정합 (rack heat ≈ CDU measured_heat)
@@ -459,7 +469,11 @@ class ObsEngine:
                         - agg["it_kw"] * HEAT_CAPTURE, 1),
                     "throttled_gpus": agg["thr"],
                     "power_state": ("off" if ctl["power"] == "off" else
-                                    "mixed" if ctl["power"] == "restart" else "on"),
+                                    "mixed" if ctl["power"] == "restart" else
+                                    "partial" if agg["trays_off"] else "on"),
+                    "trays_off": agg["trays_off"],
+                    "trays_total": len(STORE.racks[rid].trays)
+                        if rid in STORE.racks else 18,
                     "power_cap_kw": ctl["cap_kw"],
                     "workload_profile": ctl["profile"] or "steady",
                     "cordoned": ctl["cordoned"],
@@ -478,6 +492,22 @@ class ObsEngine:
                                f"(cdu={self.rack_cdu[rid]}, +{agg['offset']:.1f}°C)")
                 else:
                     self._resolve(key)
+            # 7a-2) 트레이 단위 전원 Off 알림 (Redfish 등 개별 차단)
+            off_now = set()
+            for tid, tenant, r_off in tray_off_seen:
+                if r_off:
+                    continue                     # 랙 알림이 커버
+                off_now.add(tid)
+                key = ("tray-off", tid)
+                self._fire(key, "gpu",
+                           "major" if tenant else "warning", tid,
+                           f"TRAY_POWERED_OFF: {tid} 전원 차단"
+                           + (f" — tenant {tenant} 영향 (GPU 4 유실)"
+                              if tenant else " (미할당)"))
+            for key in [k for k in self.alerts
+                        if k[0] == "tray-off" and k[1] not in off_now]:
+                self._resolve(key)
+
             # 7b) rack 제어 알림 — 전원 차단(테넌트 영향 major)·cordon
             for rid, agg in rack_agg.items():
                 ctl, koff, kcord = agg["ctl"], ("ctl-off", rid), ("ctl-cordon", rid)
@@ -784,6 +814,8 @@ def summary():
             },
             "racks": len(STORE.racks),
             "racks_off": sum(1 for a in ENGINE._rack_agg.values() if a["off"]),
+            "trays_off": sum(a.get("trays_off", 0)
+                             for a in ENGINE._rack_agg.values()),
             "racks_cordoned": sum(1 for a in ENGINE._rack_agg.values()
                                   if a["ctl"]["cordoned"]),
             "racks_capped": sum(1 for a in ENGINE._rack_agg.values()
