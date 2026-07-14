@@ -1,35 +1,43 @@
 """NeoCloud OS (NOCP) integration bridge.
 
 Exposes the exact REST contract that nocp's NicoHttpAdapter speaks
-(/hosts, /instances, /jobs with NicoHost/NicoJob shapes), backed by the
-VR NVL72 twin + DPU isolation engine. Point nocp at this base_url:
+(/hosts, /instances, /jobs, /segments with NicoHost/NicoJob/NicoSegment
+shapes). NICo owns the *orchestration* lifecycle (host state machine, jobs,
+segments) in memory; every *physical* effect is delegated to the AI Infra
+Emulator (:9100) via ``app.aiinfra`` (Redfish power, PXE/DHCP provisioning,
+DPU tenant-isolation attachments).
 
     NOCP_NICO_URL=http://127.0.0.1:9000/nico-bridge  ./run.sh
 
-Lenient: accepts any host_id nocp sends (auto-registers on first touch and,
-when the id maps onto a twin compute tray, drives the real Redfish/DPU state).
+Lenient: accepts any host_id nocp sends (auto-registers on first touch). When
+the id maps onto a fleet tray (nh-{tray_id}), it drives the real AI Infra
+physical state; otherwise it stays a pure control-plane record.
 """
 import itertools
 from typing import Optional
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from .store import STORE, _iso
+
+from .store import STORE, _iso, site_name_of_tray
+from . import aiinfra
 
 router = APIRouter(prefix="/nico-bridge", tags=["nocp-bridge"])
 
-# NICo-compatible host/job registry (host_id -> record)
+# NICo-owned orchestration state (host_id -> record, job_id -> record)
 _hosts = {}
 _jobs = {}
+_segments = {}
 _job_seq = itertools.count(1)
+
+SANITIZE_STEPS = ["nvme_secure_erase", "gpu_memory_wipe", "system_memory_wipe",
+                  "tpm_reset", "re_attestation", "firmware_revalidation",
+                  "network_state_clear"]
 
 
 def reset_bridge():
     """Clear bridge-side lifecycle state (called by the emulator /reset)."""
     _hosts.clear(); _jobs.clear(); _segments.clear()
-
-SANITIZE_STEPS = ["nvme_secure_erase", "gpu_memory_wipe", "system_memory_wipe",
-                  "tpm_reset", "re_attestation", "firmware_revalidation",
-                  "network_state_clear"]
 
 
 class _ProvisionBody(BaseModel):
@@ -45,28 +53,37 @@ class _CordonBody(BaseModel):
     reason: str = ""
 
 
-def _tray_for(host_id: str):
-    """Map a nocp host_id onto a twin compute tray.
+# ── host_id <-> tray mapping ───────────────────────────────────────────
+def _tray_id(host_id: str) -> str:
+    return host_id[3:] if host_id.startswith("nh-") else host_id
 
-    nocp host_id == "nh-{tray_id}"; the cluster twin uses the same tray_ids,
-    so this is now an exact 1:1 mapping across the full 2,520-tray fleet."""
-    tid = host_id[3:] if host_id.startswith("nh-") else host_id
-    if tid in STORE.trays:
-        return STORE.trays[tid]
-    if host_id in STORE.trays:
-        return STORE.trays[host_id]
-    keys = list(STORE.trays)          # fallback for non-fleet ids
-    return STORE.trays[keys[hash(host_id) % len(keys)]] if keys else None
+
+def _dpu_id(host_id: str) -> str:
+    """Fleet DPU id for a host — one BlueField DPU per compute tray."""
+    return f"{_tray_id(host_id)}-dpu-0"
+
+
+def _tenant_net(tenant_ref: str, dpu_id: str) -> dict:
+    return {
+        "network_id": f"net-{tenant_ref}-{dpu_id}",
+        "tenant_id": tenant_ref, "network_type": "vxlan",
+        "vni": 10000 + (hash(tenant_ref) % 6000),
+        "vrf": tenant_ref, "subnet": "10.200.0.0/16",
+    }
+
+
+def _default_host(host_id: str) -> dict:
+    tid = _tray_id(host_id)
+    return {"host_id": host_id, "tray_id": tid, "sku": "vr-nvl72",
+            "site": site_name_of_tray(tid) or "STT 가산", "state": "pool_ready",
+            "firmware_ok": True, "attested": True, "cordoned": False,
+            "instance_id": None}
 
 
 def _host(host_id: str, create=True) -> dict:
     h = _hosts.get(host_id)
     if h is None and create:
-        tray = _tray_for(host_id)
-        h = {"host_id": host_id, "tray_id": host_id, "sku": "vr-nvl72",
-             "site": "STT Gasan", "state": "pool_ready", "firmware_ok": True,
-             "attested": True, "cordoned": False, "instance_id": None,
-             "_dpu": tray.dpu_id if tray else None}
+        h = _default_host(host_id)
         _hosts[host_id] = h
     if h is None:
         raise HTTPException(404, f"host {host_id} not found")
@@ -91,20 +108,31 @@ def _mkjob(op: str, host_id: str, state="succeeded", detail="", polls=0) -> dict
     return j
 
 
+# ── hosts ──────────────────────────────────────────────────────────────
 @router.get("/hosts")
 def list_hosts(limit: int = 3000, offset: int = 0):
-    """Full-fleet host list — one NicoHost per twin compute tray (2,520),
-    overlaid with any lifecycle state already touched via the bridge."""
+    """Full-fleet host list — one NicoHost per AI Infra compute tray (2,520),
+    overlaid with any lifecycle state already touched via the bridge.
+
+    Graceful: if AI Infra is unreachable, returns just the NICo-side overlay
+    (whatever hosts have already been touched) rather than failing."""
+    try:
+        dpus = aiinfra.list_dpus(limit=limit, offset=offset)
+    except aiinfra.AIInfraError:
+        with STORE.lock:
+            return [_view(h) for h in list(_hosts.values())[offset:offset + limit]]
+    out = []
     with STORE.lock:
-        out = []
-        for tid, tr in list(STORE.trays.items())[offset:offset + limit]:
+        for d in dpus:
+            tid = d.get("compute_tray_id") or d.get("dpu_id", "").rsplit("-dpu", 1)[0]
             hid = f"nh-{tid}"
             h = _hosts.get(hid)
             if h is None:
-                out.append({"host_id": hid, "tray_id": tid, "sku": "vr-nvl72",
-                            "site": tr.site, "state": "pool_ready",
-                            "firmware_ok": True, "attested": True,
-                            "cordoned": False, "instance_id": None})
+                rec = _default_host(hid)
+                # reflect live DPU health/tenant from AI Infra when untouched
+                if d.get("tenants"):
+                    rec["tenant_ref"] = d["tenants"][0]
+                out.append(rec)
             else:
                 out.append(_view(h))
         return out
@@ -133,19 +161,24 @@ def unreserve(host_id: str):
 
 @router.post("/hosts/{host_id}/provision")
 def provision(host_id: str, body: _ProvisionBody):
+    """Provision a host: PXE-boot the backing tray and start the AI Infra
+    provisioning workflow (DHCP lease + boot progression)."""
     with STORE.lock:
         h = _host(host_id); h["state"] = "provisioning"
-        tray = STORE.trays.get(host_id) or (
-            STORE.trays.get(h["_dpu"].rsplit("-dpu", 1)[0]) if h.get("_dpu") else None)
-        if tray:                       # drive the real twin: PXE boot the tray
-            tray.boot_source = "Pxe"; tray.lifecycle_state = "Provisioning"
-            STORE.set_power(tray, "ForceRestart")
+        tid = _tray_id(host_id)
+        detail = f"image={body.image_ref}"
+        try:                            # drive the real twin on AI Infra
+            aiinfra.reset_power(tid, "ForceRestart")
+            prov = aiinfra.provision(tid, planned=True)
+            detail += f" · {prov.get('lifecycle_state', 'Provisioning')}" \
+                      f"/{prov.get('boot_stage', '')}"
+        except aiinfra.AIInfraError as e:
+            STORE.event("warning", "NeoCloudEmulator.1.0.BridgeProvisionSkipped",
+                        [host_id, str(e)])
         STORE.event("info", "NeoCloudEmulator.1.0.HostProvisionStarted",
                     [host_id, body.image_ref])
-        # emulator converges immediately; report a completed job
         h["state"] = "provisioned"
-        return _mkjob("provision", host_id, "succeeded",
-                      f"image={body.image_ref}")
+        return _mkjob("provision", host_id, "succeeded", detail)
 
 
 @router.post("/hosts/{host_id}/abort-provision")
@@ -155,33 +188,25 @@ def abort(host_id: str):
         return _view(h)
 
 
+# ── instances (allocation = tenant DPU isolation) ──────────────────────
 @router.post("/instances")
 def allocate(body: _InstanceBody):
+    """Allocate a host to a tenant. The isolating effect is a DPU tenant
+    attachment created on AI Infra (VF + default-deny security policy)."""
     with STORE.lock:
         h = _host(body.host_id)
         iid = f"inst-{next(_job_seq):05d}"
-        h["instance_id"] = iid; h["state"] = "allocated"; h["tenant_id"] = body.tenant_ref
-        # finalize the backing tray: provisioning -> in service (allocated)
-        tray = _tray_for(body.host_id)
-        if tray:
-            tray.lifecycle_state = "InService"; tray.boot_stage = "HostReady"
-            tray.power_target = "On"; tray.power_state = "On"
-        # drive DPU isolation: attach the tenant on the backing DPU
-        did = h.get("_dpu")
-        if did and did in STORE.dpus:
-            try:
-                from . import dpu as dpu_mod
-                from . import models as m
-                dpu_mod.create_attachment(did, m.AttachmentCreate(
-                    tenant_id=body.tenant_ref,
-                    network=m.TenantNetwork(
-                        network_id=f"net-{body.tenant_ref}",
-                        tenant_id=body.tenant_ref, network_type="vxlan",
-                        vni=10000 + (hash(body.tenant_ref) % 6000),
-                        vrf=body.tenant_ref, subnet="10.200.0.0/16")))
-            except Exception as e:      # isolation is best-effort in the bridge
-                STORE.event("warning", "NeoCloudEmulator.1.0.BridgeIsolationSkipped",
-                            [body.host_id, str(e)])
+        h["instance_id"] = iid; h["state"] = "allocated"
+        h["tenant_id"] = body.tenant_ref
+        did = _dpu_id(body.host_id)
+        try:                            # drive DPU isolation on AI Infra
+            att = aiinfra.attach_dpu(did, body.tenant_ref,
+                                     _tenant_net(body.tenant_ref, did))
+            h["_dpu"] = did
+            h["_att_id"] = att.get("attachment_id")
+        except aiinfra.AIInfraError as e:   # isolation is best-effort in the bridge
+            STORE.event("warning", "NeoCloudEmulator.1.0.BridgeIsolationSkipped",
+                        [body.host_id, str(e)])
         STORE.event("info", "NeoCloudEmulator.1.0.InstanceAllocated",
                     [body.host_id, body.tenant_ref, iid])
         return _view(h)
@@ -193,37 +218,25 @@ def release(instance_id: str):
         for h in _hosts.values():
             if h.get("instance_id") == instance_id:
                 h["instance_id"] = None; h["state"] = "released"
-                # allocate()의 역방향: DPU 테넌트 격리 해제 + 트레이 원복
                 tenant = h.pop("tenant_id", None)
-                did = h.get("_dpu")
-                d = STORE.dpus.get(did) if did else None
-                if d and tenant:
-                    for aid, a in [(k, v) for k, v in STORE.attachments.items()
-                                   if v["dpu_id"] == did
-                                   and v["tenant_id"] == tenant]:
-                        STORE.attachments.pop(aid, None)
-                        d.functions.pop(a["function_id"], None)
-                        d.representors.pop(a["representor_id"], None)
-                        STORE.security_policies.pop(
-                            a["security_policy_id"], None)
-                # 마지막 attachment까지 회수되면 테넌트 네트워크(P_Key 원천) 해제
-                if tenant and not any(
-                        a["tenant_id"] == tenant
-                        for a in STORE.attachments.values()):
-                    for nid in [k for k, n in STORE.tenant_networks.items()
-                                if n.get("tenant_id") == tenant]:
-                        STORE.tenant_networks.pop(nid, None)
+                did = h.pop("_dpu", None)
+                att_id = h.pop("_att_id", None)
+                if did and att_id:      # tear down DPU isolation on AI Infra
+                    try:
+                        aiinfra.detach_dpu(did, att_id)
+                    except aiinfra.AIInfraError as e:
+                        STORE.event("warning",
+                                    "NeoCloudEmulator.1.0.BridgeDetachSkipped",
+                                    [h["host_id"], str(e)])
+                if tenant:
                     STORE.event("info",
                                 "NeoCloudEmulator.1.0.TenantNetworkReleased",
                                 [tenant])
-                tray = _tray_for(h["host_id"])
-                if tray:
-                    tray.lifecycle_state = "Ready"
-                    tray.boot_stage = "Idle"
                 return _mkjob("release", h["host_id"], "succeeded")
         raise HTTPException(404, f"instance {instance_id} not found")
 
 
+# ── sanitize / cordon ──────────────────────────────────────────────────
 @router.post("/hosts/{host_id}/sanitize")
 def sanitize(host_id: str):
     with STORE.lock:
@@ -261,9 +274,6 @@ def get_job(job_id: str):
 
 
 # ── SDN segments (tenant VPC / L3 EVPN) — the isolating stage ──────────
-_segments = {}
-
-
 class _SegmentBody(BaseModel):
     tenant_ref: str
     vrf: str
@@ -280,35 +290,28 @@ def _seg_view(s: dict) -> dict:
 @router.post("/segments")
 def create_segment(body: _SegmentBody):
     """Create a tenant VPC segment and drive DPU isolation on each host's DPU
-    (FNN L3 EVPN — vrf_dataplane vpc_<l3vni>). Same shape as nocp NicoSegment."""
+    (FNN L3 EVPN — vrf_dataplane vpc_<l3vni>) via AI Infra tenant-attachments.
+    Same shape as nocp NicoSegment."""
     with STORE.lock:
         sid = STORE.nid("seg")
-        from . import dpu as dpu_mod
-        from . import models as m
         attached = 0
+        att_refs = []                   # [(dpu_id, att_id)] for teardown
+        net_base = {"tenant_id": body.tenant_ref, "network_type": "vxlan",
+                    "vni": body.l3vni, "vrf": body.vrf, "subnet": "10.200.0.0/16"}
         for hid in body.host_ids:
-            tray = _tray_for(hid)
-            did = tray.dpu_id if tray else None
-            if did and did in STORE.dpus:
-                # skip if this tenant already attached on that DPU
-                d = STORE.dpus[did]
-                if any(f.tenant_id == body.tenant_ref for f in d.functions.values()):
-                    continue
-                try:
-                    dpu_mod.create_attachment(did, m.AttachmentCreate(
-                        tenant_id=body.tenant_ref,
-                        network=m.TenantNetwork(
-                            network_id=f"net-{body.tenant_ref}-{did}",
-                            tenant_id=body.tenant_ref, network_type="vxlan",
-                            vni=body.l3vni, vrf=body.vrf,
-                            subnet="10.200.0.0/16")))
-                    attached += 1
-                except Exception:
-                    pass
+            did = _dpu_id(hid)
+            try:
+                net = {**net_base, "network_id": f"net-{body.tenant_ref}-{did}"}
+                att = aiinfra.attach_dpu(did, body.tenant_ref, net)
+                att_refs.append((did, att.get("attachment_id")))
+                attached += 1
+            except aiinfra.AIInfraError:
+                pass                    # best-effort per host
         seg = {"segment_id": sid, "tenant_ref": body.tenant_ref, "vrf": body.vrf,
                "l3vni": body.l3vni, "converged_vni": body.converged_vni,
                "virtualizer": "fnn", "vrf_dataplane": f"vpc_{body.l3vni}",
-               "host_ids": list(body.host_ids), "_attached": attached}
+               "host_ids": list(body.host_ids), "_attached": attached,
+               "_att_refs": att_refs}
         _segments[sid] = seg
         STORE.event("info", "NeoCloudEmulator.1.0.SegmentCreated",
                     [body.tenant_ref, body.vrf, str(attached)])
@@ -327,6 +330,12 @@ def delete_segment(segment_id: str):
         s = _segments.pop(segment_id, None)
         if not s:
             raise HTTPException(404, f"segment {segment_id} not found")
+        for did, att_id in s.get("_att_refs", []):
+            if att_id:
+                try:
+                    aiinfra.detach_dpu(did, att_id)
+                except aiinfra.AIInfraError:
+                    pass
         STORE.event("info", "NeoCloudEmulator.1.0.SegmentDeleted",
                     [s["tenant_ref"], s["vrf"]])
         return _seg_view(s)
