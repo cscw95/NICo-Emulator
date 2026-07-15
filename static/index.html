@@ -78,6 +78,64 @@
   .svc .dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--green)}
   .svc .dot.warning{background:var(--amber)} .svc .dot.critical{background:var(--red)}
   .svc .row .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* section label inside instance card */
+  .inst .slab{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;
+    color:var(--muted);font-weight:600;margin:16px 0 7px;display:flex;
+    align-items:center;gap:8px}
+  .inst .slab .c{font-family:var(--mono);color:var(--soft);font-size:10px}
+  /* HA raft nodes */
+  .hanodes{display:flex;gap:7px;flex-wrap:wrap}
+  .hanode{border:1px solid var(--line);border-radius:8px;padding:6px 9px;
+    background:#111a25;font-size:11px;display:flex;flex-direction:column;gap:2px;min-width:96px}
+  .hanode .hn{font-family:var(--mono);color:var(--text);display:flex;align-items:center;gap:5px}
+  .hanode .hn .hdot{width:6px;height:6px;border-radius:50%;background:var(--green);flex:none}
+  .hanode .hr{font-size:10px}
+  .hanode.leader{border-color:#2c4a12}
+  .hanode .role{font-family:var(--mono);font-size:10px}
+  .hanode.leader .role{color:var(--green-text)} .hanode .role.follower{color:var(--muted)}
+  /* orchestration activity */
+  .orch{background:#111a25;border:1px solid var(--line);border-radius:10px;padding:12px 13px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{font-family:var(--mono);font-size:11px;padding:3px 9px;border-radius:12px;
+    border:1px solid var(--line);color:var(--muted);display:flex;gap:6px;align-items:center}
+  .chip.on{color:var(--text);border-color:#2c4a12}
+  .chip .cn{color:var(--muted)} .chip.on .cn{color:var(--green-text)}
+  .orow{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .obox{flex:1;min-width:90px;background:#0f1722;border:1px solid var(--line);
+    border-radius:8px;padding:7px 10px}
+  .obox .k{color:var(--muted);font-size:10px;text-transform:uppercase}
+  .obox .v{font-family:var(--mono);font-size:16px;margin-top:2px}
+  .obox .v.warn{color:var(--amber)} .obox .v.on{color:var(--green)}
+  .seglist{margin-top:10px;display:flex;flex-direction:column;gap:5px}
+  .segrow{display:flex;justify-content:space-between;gap:8px;font-family:var(--mono);
+    font-size:11px;background:#0f1722;border:1px solid var(--line);border-radius:7px;padding:5px 9px}
+  .segrow .sv{color:var(--green-text)}
+  .jtbl{width:100%;border-collapse:collapse;font-size:11px;margin-top:10px}
+  .jtbl th,.jtbl td{text-align:left;padding:4px 7px;border-bottom:1px solid var(--line)}
+  .jtbl th{color:var(--muted);text-transform:uppercase;font-size:9.5px}
+  .jtbl td.mono{font-family:var(--mono)}
+  .emptyo{color:var(--muted);font-size:12px;padding:6px 2px}
+  .inst .seebtn{margin-top:6px}
+  .inst.selected{border-color:var(--green)}
+  /* expanded service grid with detail */
+  .svcg{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;margin-top:8px}
+  @media(max-width:640px){.svcg{grid-template-columns:1fr}}
+  .svcg .srow{display:flex;gap:7px;align-items:flex-start;min-width:0}
+  .svcg .dot{width:7px;height:7px;border-radius:50%;flex:none;margin-top:4px;background:var(--green)}
+  .svcg .dot.warning{background:var(--amber)} .svcg .dot.critical{background:var(--red)}
+  .svcg .stx{min-width:0}
+  .svcg .snm{font-size:12px;color:var(--soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .svcg .sdt{font-size:10.5px;color:var(--muted);font-family:var(--mono);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .svcg .scomp{color:#6d8199}
+  /* site drill-down panel */
+  #siteDetail{margin-top:18px}
+  .ddpanel{background:var(--card);border:1px solid var(--green);border-radius:12px;padding:18px}
+  .ddpanel .ddhead{display:flex;justify-content:space-between;align-items:center;
+    gap:12px;flex-wrap:wrap;margin-bottom:12px}
+  .ddpanel .ddhead .ttl{font-family:var(--mono);font-size:15px;font-weight:700;color:var(--green)}
+  .ddgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:900px){.ddgrid{grid-template-columns:1fr}}
   table{width:100%;border-collapse:collapse;font-size:12.5px}
   th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line)}
   th{color:var(--muted);text-transform:uppercase;font-size:10.5px;letter-spacing:.05em}
@@ -149,6 +207,7 @@
       <h2>Per-Site NICo Instances <span class="count" id="siteCount">&mdash;</span></h2>
       <div class="muted" id="crossNote" style="margin-bottom:12px"></div>
       <div class="instances" id="instances"></div>
+      <div id="siteDetail"></div>
     </div>
   </section>
 
@@ -259,31 +318,119 @@ async function loadOverview(){
   }catch(e){fs.innerHTML=stat("fleet","unavailable","small");}
 }
 
+let SELECTED_SITE=null;
 async function loadSites(){
   const wrap = document.getElementById("instances");
-  wrap.innerHTML = '<div class="muted">loading…</div>';
+  if(!wrap.children.length) wrap.innerHTML = '<div class="muted">loading…</div>';
   try{
     const d = await getJSON("/emulator/v1/sites");
     document.getElementById("siteCount").textContent = d.sites.length+" instances";
     document.getElementById("crossNote").textContent = d.cross_site_note||"";
     wrap.innerHTML = d.sites.map(renderInst).join("");
+    if(SELECTED_SITE) loadSiteDetail(SELECTED_SITE);
   }catch(e){wrap.innerHTML='<div class="pill bad">failed: '+esc(e.message)+'</div>';}
 }
+// state -> chip colouring (occupied lifecycle states highlight green)
+const STATE_ON=["reserved","provisioning","provisioned","allocated"];
+function haNode(n){
+  return '<div class="hanode '+(n.role==="leader"?"leader":"")+'">'+
+    '<div class="hn"><span class="hdot"></span>'+esc(n.name)+'</div>'+
+    '<div class="hr"><span class="role '+esc(n.role)+'">'+esc(n.role)+'</span>'+
+      ' <span class="muted">· term '+esc(n.raft_term)+'</span></div></div>';
+}
+function orchPanel(o){
+  const hs=o.hosts_by_state||{};
+  const order=["pool_ready","reserved","provisioning","provisioned","allocated","released"];
+  const chips=order.map(k=>'<span class="chip '+((hs[k]||0)>0&&STATE_ON.includes(k)?"on":"")+'">'+
+    esc(k)+' <span class="cn">'+esc(hs[k]||0)+'</span></span>').join("");
+  if(!o.managed_hosts){
+    return '<div class="orch"><div class="emptyo">관리 중 호스트 없음 — 개통 대기</div>'+
+      '<div class="chips" style="margin-top:8px">'+chips+'</div></div>';
+  }
+  const segs=(o.segments||[]).length?
+    '<div class="seglist">'+o.segments.map(g=>'<div class="segrow"><span>'+
+      esc(g.tenant_ref)+' <span class="muted">· '+esc(g.vrf)+' · l3vni '+esc(g.l3vni)+
+      '</span></span><span class="sv">'+esc(g.host_count)+' host</span></div>').join("")+'</div>'
+    :'<div class="emptyo">세그먼트 없음</div>';
+  const jobs=(o.recent_jobs||[]).length?
+    '<table class="jtbl"><thead><tr><th>job</th><th>op</th><th>host</th><th>state</th></tr></thead><tbody>'+
+    o.recent_jobs.map(j=>'<tr><td class="mono">'+esc(j.job_id)+'</td><td>'+esc(j.op)+
+      '</td><td class="mono">'+esc(j.host_id)+'</td><td>'+stTag(j.state)+'</td></tr>').join("")+
+    '</tbody></table>':'';
+  return '<div class="orch">'+
+    '<div class="chips">'+chips+'</div>'+
+    '<div class="orow">'+
+      '<div class="obox"><div class="k">managed</div><div class="v">'+esc(o.managed_hosts)+'</div></div>'+
+      '<div class="obox"><div class="k">active jobs</div><div class="v '+(o.active_jobs?"on":"")+'">'+esc(o.active_jobs)+'</div></div>'+
+      '<div class="obox"><div class="k">failed</div><div class="v '+(o.failed_jobs?"warn":"")+'">'+esc(o.failed_jobs||0)+'</div></div>'+
+      '<div class="obox"><div class="k">segments</div><div class="v">'+esc((o.segments||[]).length)+'</div></div>'+
+      '<div class="obox"><div class="k">tenants</div><div class="v">'+esc((o.tenants_served||[]).length)+'</div></div></div>'+
+    '<div class="slab" style="margin-top:12px">Tenant Segments</div>'+segs+
+    (jobs?('<div class="slab" style="margin-top:12px">Recent Jobs</div>'+jobs):'')+
+    '</div>';
+}
 function renderInst(s){
-  const f = s.fleet||{};
-  const svc = (s.services||[]).map(x=>'<div class="row"><span class="dot '+esc(x.status)+'"></span><span class="nm" title="'+esc(x.detail)+'">'+esc(x.name)+'</span></div>').join("");
-  return '<div class="inst '+esc(s.status)+'">'+
+  const f = s.fleet||{}, o=s.orchestration||{}, ha=s.ha||{};
+  const ha_nodes=(ha.nodes||[]).map(haNode).join("");
+  const svc = (s.services||[]).map(x=>'<div class="srow"><span class="dot '+esc(x.status)+'"></span>'+
+    '<div class="stx"><div class="snm">'+esc(x.name)+' <span class="scomp">'+esc(x.component)+'</span></div>'+
+    '<div class="sdt" title="'+esc(x.detail)+'">'+esc(x.detail)+'</div></div></div>').join("");
+  return '<div class="inst '+esc(s.status)+(SELECTED_SITE===s.site_id?" selected":"")+'" id="inst-'+esc(s.site_id)+'">'+
     '<div class="ihead"><div><div class="iid">'+esc(s.nico_instance)+'</div>'+
-      '<div class="isite">'+esc(s.site)+' <span class="rgn">· '+esc(s.region)+'</span></div></div>'+
+      '<div class="isite">'+esc(s.site)+' <span class="rgn">· '+esc(s.region)+'</span></div>'+
+      '<div class="muted mono" style="font-size:10.5px;margin-top:3px">v'+esc(s.version)+' · '+esc(ha.quorum||"")+' quorum</div></div>'+
       '<div class="ista">status <span class="v">'+esc(s.status)+'</span><br>'+
-        'HA <span class="v">'+esc(s.ha_nodes)+' nodes</span><br>'+
-        'svc <span class="v">'+esc(s.service_ok)+'/'+esc(s.service_total)+'</span></div></div>'+
+        'svc <span class="v">'+esc(s.service_ok)+'/'+esc(s.service_total)+'</span><br>'+
+        'managed <span class="v">'+esc(o.managed_hosts||0)+'</span></div></div>'+
+    '<div class="slab">HA Raft Nodes <span class="c">'+esc(ha.quorum||"")+'</span></div>'+
+    '<div class="hanodes">'+ha_nodes+'</div>'+
+    '<div class="slab">Orchestration Activity</div>'+orchPanel(o)+
+    '<div class="slab">Service Inventory <span class="c">'+esc(s.service_ok)+'/'+esc(s.service_total)+' ok</span></div>'+
+    '<div class="svcg">'+svc+'</div>'+
+    '<div class="slab">Managed Fleet <span class="c">via AI Infra</span></div>'+
     '<div class="fleet">'+
       '<div class="fs"><div class="k">racks</div><div class="v">'+esc(f.racks)+'</div></div>'+
       '<div class="fs"><div class="k">hosts</div><div class="v">'+esc(f.trays)+'</div></div>'+
       '<div class="fs"><div class="k">GPUs</div><div class="v">'+esc(f.gpus)+'</div></div>'+
       '<div class="fs"><div class="k">tenants</div><div class="v">'+esc((f.tenants||[]).length)+'</div></div></div>'+
-    '<div class="svc">'+svc+'</div></div>';
+    '<button class="btn seebtn" onclick="selectSite(\''+esc(s.site_id)+'\')">세부 &rarr;</button>'+
+    '</div>';
+}
+function selectSite(id){
+  SELECTED_SITE = (SELECTED_SITE===id)?null:id;
+  document.querySelectorAll(".inst").forEach(el=>el.classList.toggle("selected",el.id==="inst-"+SELECTED_SITE));
+  const dd=document.getElementById("siteDetail");
+  if(!SELECTED_SITE){dd.innerHTML="";return;}
+  loadSiteDetail(SELECTED_SITE);
+  dd.scrollIntoView({behavior:"smooth",block:"nearest"});
+}
+async function loadSiteDetail(id){
+  const dd=document.getElementById("siteDetail");
+  try{
+    const s=await getJSON("/emulator/v1/sites/"+id);
+    const o=s.orchestration||{};
+    const sus=(s.scalable_units||[]).map(u=>'<tr><td class="mono">'+esc(u.su_id)+'</td>'+
+      '<td>'+esc(u.racks)+'</td><td>'+esc(u.gpus)+'</td><td class="mono muted">'+
+      esc((u.tenants||[]).join(", ")||"—")+'</td></tr>').join("")
+      || '<tr><td colspan="4" class="muted">no scalable units</td></tr>';
+    const evs=(s.recent_events||[]).map(e=>'<tr><td class="mono muted">'+esc(e.at)+'</td>'+
+      '<td><span class="tag '+(e.severity==="warning"?"mid":e.severity==="critical"?"off":"")+'">'+esc(e.severity)+
+      '</span></td><td class="mono">'+esc(e.message_id)+'</td></tr>').join("")
+      || '<tr><td colspan="3" class="muted">이 사이트 관련 최근 이벤트 없음</td></tr>';
+    dd.innerHTML='<div class="ddpanel"><div class="ddhead">'+
+      '<div class="ttl">'+esc(s.nico_instance)+' <span class="muted" style="font-size:12px">· '+esc(s.site)+'</span></div>'+
+      '<button class="btn" onclick="selectSite(\''+esc(id)+'\')">&times; 닫기</button></div>'+
+      '<div class="ddgrid"><div>'+
+        '<div class="slab">Scalable Units 롤업</div>'+
+        '<div class="scroll"><table class="jtbl"><thead><tr><th>su</th><th>racks</th><th>gpus</th><th>tenants</th></tr></thead>'+
+        '<tbody>'+sus+'</tbody></table></div>'+
+        '<div class="slab" style="margin-top:14px">최근 이벤트</div>'+
+        '<div class="scroll"><table class="jtbl"><thead><tr><th>at</th><th>severity</th><th>message_id</th></tr></thead>'+
+        '<tbody>'+evs+'</tbody></table></div>'+
+      '</div><div>'+
+        '<div class="slab">오케스트레이션 활동 상세</div>'+orchPanel(o)+
+      '</div></div></div>';
+  }catch(e){dd.innerHTML='<div class="pill bad">drill-down 실패: '+esc(e.message)+'</div>';}
 }
 
 let HOSTS=[];
@@ -374,6 +521,14 @@ document.getElementById("foot").innerHTML =
   'NICo Emulator — Site-Local Control Plane · orchestration only · physical Vera Rubin NVL72 twin owned by '+
   '<a href="'+AI_INFRA+'" target="_blank">AI Infra Emulator :9100 &#8599;</a>';
 loadOverview();
+// live refresh (4s) of the active data view — light views only
+setInterval(()=>{
+  const active=(document.querySelector("nav.tabs button.active")||{}).dataset;
+  const v=active&&active.v;
+  if(v==="overview")loadOverview();
+  else if(v==="sites")loadSites();
+  else if(v==="events")loadEvents();
+},4000);
 </script>
 </body>
 </html>
