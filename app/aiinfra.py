@@ -78,6 +78,12 @@ def obs_summary() -> Dict[str, Any]:
     return _request("GET", "/emulator/v1/obs/summary")
 
 
+def reset_twin() -> Dict[str, Any]:
+    """Reset the AI Infra physical twin to its pristine seed (all tenant
+    attachments/networks cleared). Used by the cascading emulator reset."""
+    return _request("POST", "/emulator/v1/reset")
+
+
 # ── Redfish power ──────────────────────────────────────────────────────
 def reset_power(tray_id: str, reset_type: str = "On") -> Dict[str, Any]:
     return _request(

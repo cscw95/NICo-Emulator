@@ -61,12 +61,24 @@ def twin():
 
 
 @app.post("/emulator/v1/reset")
-def reset():
+def reset(cascade: bool = False):
     """Reset NICo control-plane state (hosts/jobs/segments/events).
-    Does NOT reset the AI Infra physical twin."""
+
+    Default = control-plane only. `?cascade=true` also resets the AI Infra
+    physical twin (:9100) so every tier returns to a consistent pristine
+    state — used by NOCP's full-stack reset in the verification console."""
     STORE.reset()
     bridge.reset_bridge()
-    return {"status": "reset", "scope": "nico-control-plane"}
+    out = {"status": "reset", "scope": "nico-control-plane"}
+    if cascade:
+        try:
+            r = aiinfra.reset_twin()
+            out["ai_infra"] = {"status": "reset",
+                               "compute_trays": (r or {}).get("compute_trays")}
+        except aiinfra.AIInfraError as e:
+            out["ai_infra"] = {"status": "unreachable", "detail": str(e)[:160]}
+        out["scope"] = "nico-control-plane+ai-infra"
+    return out
 
 
 @app.get("/emulator/v1/events")

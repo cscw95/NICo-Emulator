@@ -74,8 +74,13 @@ def _tenant_net(tenant_ref: str, dpu_id: str) -> dict:
 
 def _default_host(host_id: str) -> dict:
     tid = _tray_id(host_id)
-    return {"host_id": host_id, "tray_id": tid, "sku": "vr-nvl72",
-            "site": site_name_of_tray(tid) or "STT 가산", "state": "pool_ready",
+    # CPU 풀 노드(nh-cpu-node-XX) — Managed K8s CP 등 범용 노드. 랙 트윈
+    # 트레이가 아니므로 sku를 구분한다 (물리 효과는 best-effort skip).
+    sku = "cpu-epyc" if tid.startswith("cpu-node-") else "vr-nvl72"
+    return {"host_id": host_id, "tray_id": tid, "sku": sku,
+            "site": site_name_of_tray(tid) or ("공용 풀" if sku == "cpu-epyc"
+                                               else "STT 가산"),
+            "state": "pool_ready",
             "firmware_ok": True, "attested": True, "cordoned": False,
             "instance_id": None}
 
@@ -322,6 +327,40 @@ def create_segment(body: _SegmentBody):
 def list_segments():
     with STORE.lock:
         return [_seg_view(s) for s in _segments.values()]
+
+
+class _AttachBody(BaseModel):
+    host_ids: list = []
+    purpose: str = "converged"
+
+
+@router.patch("/segments/{segment_id}/hosts")
+def attach_hosts(segment_id: str, body: _AttachBody):
+    """Attach extra hosts to an existing tenant segment — NOCP's Managed K8s
+    control-plane (CPU) nodes join the tenant VPC on the Converged Network.
+    Same contract as nocp's FakeNico.attach_hosts; physical DPU attachment on
+    AI Infra is best-effort (CPU pool nodes have no rack-twin counterpart)."""
+    with STORE.lock:
+        s = _segments.get(segment_id)
+        if not s:
+            raise HTTPException(404, f"segment {segment_id} not found")
+        added = [h for h in body.host_ids if h not in s["host_ids"]]
+        s["host_ids"].extend(added)
+        for hid in added:
+            did = _dpu_id(hid)
+            try:
+                net = {"tenant_id": s["tenant_ref"], "network_type": "vxlan",
+                       "vni": s["converged_vni"], "vrf": s["vrf"],
+                       "subnet": "10.250.0.0/16",
+                       "network_id": f"net-{s['tenant_ref']}-{did}-cvg"}
+                att = aiinfra.attach_dpu(did, s["tenant_ref"], net)
+                s.setdefault("_att_refs", []).append(
+                    (did, att.get("attachment_id")))
+            except aiinfra.AIInfraError:
+                pass                    # best-effort per host
+        STORE.event("info", "NeoCloudEmulator.1.0.SegmentHostsAttached",
+                    [s["tenant_ref"], body.purpose, str(len(added))])
+        return _seg_view(s)
 
 
 @router.delete("/segments/{segment_id}")
