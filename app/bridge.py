@@ -63,9 +63,12 @@ def _dpu_id(host_id: str) -> str:
     return f"{_tray_id(host_id)}-dpu-0"
 
 
-def _tenant_net(tenant_ref: str, dpu_id: str) -> dict:
+def _tenant_net(tenant_ref: str, dpu_id: str = "") -> dict:
+    """테넌트 VPC 네트워크 — 테넌트당 1개(정본). per-DPU로 만들면 AI Infra가
+    네트워크마다 IB 파티션을 파생해 P_Key가 호스트 수만큼 폭증한다(버그였음).
+    동일 network_id로 재-attach하면 AI Infra가 멤버(GUID)만 늘린다."""
     return {
-        "network_id": f"net-{tenant_ref}-{dpu_id}",
+        "network_id": f"net-{tenant_ref}",
         "tenant_id": tenant_ref, "network_type": "vxlan",
         "vni": 10000 + (hash(tenant_ref) % 6000),
         "vrf": tenant_ref, "subnet": "10.200.0.0/16",
@@ -286,6 +289,7 @@ class _SegmentBody(BaseModel):
     converged_vni: int
     host_ids: list = []
     allocation_id: Optional[str] = None
+    ib_pkey: Optional[int] = None     # NOCP가 부여한 테넌트 P_Key (값 싱크)
 
 
 def _seg_view(s: dict) -> dict:
@@ -301,18 +305,20 @@ def create_segment(body: _SegmentBody):
         sid = STORE.nid("seg")
         attached = 0
         att_refs = []                   # [(dpu_id, att_id)] for teardown
-        net_base = {"tenant_id": body.tenant_ref, "network_type": "vxlan",
-                    "vni": body.l3vni, "vrf": body.vrf, "subnet": "10.200.0.0/16"}
+        net = {"tenant_id": body.tenant_ref, "network_type": "vxlan",
+               "vni": body.l3vni, "vrf": body.vrf, "subnet": "10.200.0.0/16",
+               "network_id": f"net-{body.tenant_ref}",
+               "ib_pkey": body.ib_pkey, "fabric": "compute"}
         for hid in body.host_ids:
             did = _dpu_id(hid)
             try:
-                net = {**net_base, "network_id": f"net-{body.tenant_ref}-{did}"}
                 att = aiinfra.attach_dpu(did, body.tenant_ref, net)
                 att_refs.append((did, att.get("attachment_id")))
                 attached += 1
             except aiinfra.AIInfraError:
                 pass                    # best-effort per host
         seg = {"segment_id": sid, "tenant_ref": body.tenant_ref, "vrf": body.vrf,
+               "ib_pkey": body.ib_pkey,
                "l3vni": body.l3vni, "converged_vni": body.converged_vni,
                "virtualizer": "fnn", "vrf_dataplane": f"vpc_{body.l3vni}",
                "host_ids": list(body.host_ids), "_attached": attached,
@@ -351,8 +357,8 @@ def attach_hosts(segment_id: str, body: _AttachBody):
             try:
                 net = {"tenant_id": s["tenant_ref"], "network_type": "vxlan",
                        "vni": s["converged_vni"], "vrf": s["vrf"],
-                       "subnet": "10.250.0.0/16",
-                       "network_id": f"net-{s['tenant_ref']}-{did}-cvg"}
+                       "subnet": "10.250.0.0/16", "fabric": "converged",
+                       "network_id": f"net-{s['tenant_ref']}-cvg"}
                 att = aiinfra.attach_dpu(did, s["tenant_ref"], net)
                 s.setdefault("_att_refs", []).append(
                     (did, att.get("attachment_id")))
