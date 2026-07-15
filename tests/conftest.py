@@ -21,6 +21,25 @@ def _reset_nico():
     bridge.reset_bridge()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_ai_infra(monkeypatch):
+    """Default: stub the AI Infra client so unit tests never touch the live
+    :9100 twin (no shared-state pollution). Tests that explicitly request the
+    ``require_ai_infra`` fixture opt back into the real emulator."""
+    monkeypatch.setattr(aiinfra, "list_racks", lambda **k: {"racks": []})
+    monkeypatch.setattr(aiinfra, "list_leases", lambda **k: [])
+    monkeypatch.setattr(aiinfra, "list_dpus", lambda **k: [])
+    monkeypatch.setattr(aiinfra, "get_dpu", lambda *a, **k: {})
+    monkeypatch.setattr(aiinfra, "reset_power", lambda *a, **k: {})
+    monkeypatch.setattr(aiinfra, "provision", lambda *a, **k: {})
+    monkeypatch.setattr(aiinfra, "attach_dpu",
+                        lambda *a, **k: {"attachment_id": "att-test"})
+    monkeypatch.setattr(aiinfra, "detach_dpu", lambda *a, **k: {})
+    monkeypatch.setattr(aiinfra, "send_traffic", lambda *a, **k: {})
+    monkeypatch.setattr(aiinfra, "inject_fault", lambda *a, **k: {})
+    monkeypatch.setattr(aiinfra, "recover_dpu", lambda *a, **k: {})
+
+
 @pytest.fixture
 def client():
     """Fresh TestClient with NICo control-plane state reset before/after."""

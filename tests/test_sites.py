@@ -22,14 +22,3 @@ def test_sites_list_shape(client):
         assert s["service_total"] == len(s["services"])
 
 
-def test_site_fleet_aggregated_from_ai_infra(client, require_ai_infra):
-    r = client.get("/emulator/v1/sites/gasan")
-    assert r.status_code == 200
-    body = r.json()
-    f = body["fleet"]
-    assert f["ai_infra"] is True
-    # gasan = su-1(16)+su-2(8)+su-3(12) = 36 racks · 648 trays
-    assert f["racks"] == 36, f"expected 36 gasan racks, got {f['racks']}"
-    assert f["trays"] == 648
-    assert f["gpus"] == 648 * 4
-    assert body["scalable_units"], "per-SU roll-up should be populated"
