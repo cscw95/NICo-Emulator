@@ -65,8 +65,9 @@ def _orchestration(site_id: str) -> dict:
                          "l3vni": s["l3vni"], "host_count": len(host_ids)})
         tenants.add(s["tenant_ref"])
 
-    # AI Infra의 실제 DPU 격리 병합 — NICo 재기동으로 브리지 인메모리가 비어도
-    # 물리 트윈에 살아있는 개통(allocated) 상태를 세부 동작 상태에 반영한다.
+    # Merge in the real DPU isolation from AI Infra — even if a NICo restart
+    # leaves the bridge in-memory state empty, reflect the allocated state that
+    # is still live on the physical twin into the detailed operational state.
     try:
         f = _fleet(site_id)
         allocated_live = f.get("allocated_hosts", 0)
@@ -74,10 +75,10 @@ def _orchestration(site_id: str) -> dict:
     except Exception:
         allocated_live, live_tenants = 0, set()
     if allocated_live > hosts_by_state.get("allocated", 0):
-        hosts_by_state["allocated"] = allocated_live      # 물리 격리 기준
+        hosts_by_state["allocated"] = allocated_live      # physical isolation as the basis
         managed = max(managed, allocated_live)
     tenants |= live_tenants
-    # 세그먼트가 브리지에 없으면(재기동) 실 격리 테넌트로 합성 표기
+    # If a segment is absent from the bridge (restart), synthesize it from the actually-isolated tenants
     seg_tenants = {s["tenant_ref"] for s in segments}
     for t in sorted(live_tenants - seg_tenants):
         segments.append({"segment_id": f"vpc-{t}", "tenant_ref": t,
@@ -147,7 +148,7 @@ def _fleet(site_id: str) -> dict:
         gpus += r.get("gpus", 0)
         dpus += r.get("dpus", 0)
         rt = r.get("tenants") or []
-        if rt:                                  # 테넌트 격리된 랙 = 18 host 할당
+        if rt:                                  # tenant-isolated rack = 18 hosts allocated
             allocated += r.get("trays", 0)
         for k, v in (r.get("power") or {}).items():
             power[k] = power.get(k, 0) + v

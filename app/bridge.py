@@ -64,9 +64,10 @@ def _dpu_id(host_id: str) -> str:
 
 
 def _tenant_net(tenant_ref: str, dpu_id: str = "") -> dict:
-    """테넌트 VPC 네트워크 — 테넌트당 1개(정본). per-DPU로 만들면 AI Infra가
-    네트워크마다 IB 파티션을 파생해 P_Key가 호스트 수만큼 폭증한다(버그였음).
-    동일 network_id로 재-attach하면 AI Infra가 멤버(GUID)만 늘린다."""
+    """Tenant VPC network — exactly one per tenant (canonical). Making it
+    per-DPU would cause AI Infra to derive an IB partition per network, so the
+    P_Key count would explode with the host count (this was a bug). Re-attaching
+    with the same network_id makes AI Infra only add members (GUIDs)."""
     return {
         "network_id": f"net-{tenant_ref}",
         "tenant_id": tenant_ref, "network_type": "vxlan",
@@ -77,8 +78,9 @@ def _tenant_net(tenant_ref: str, dpu_id: str = "") -> dict:
 
 def _default_host(host_id: str) -> dict:
     tid = _tray_id(host_id)
-    # CPU 풀 노드(nh-cpu-node-XX) — Managed K8s CP 등 범용 노드. 랙 트윈
-    # 트레이가 아니므로 sku를 구분한다 (물리 효과는 best-effort skip).
+    # CPU pool node (nh-cpu-node-XX) — general-purpose node such as a Managed
+    # K8s CP. It is not a rack-twin tray, so the sku is distinguished here
+    # (physical effects are best-effort skip).
     sku = "cpu-epyc" if tid.startswith("cpu-node-") else "vr-nvl72"
     return {"host_id": host_id, "tray_id": tid, "sku": sku,
             "site": site_name_of_tray(tid) or ("공용 풀" if sku == "cpu-epyc"
@@ -100,7 +102,7 @@ def _host(host_id: str, create=True) -> dict:
 
 def _view(h: dict) -> dict:
     v = {k: val for k, val in h.items() if not k.startswith("_")}
-    # NicoHost 계약 호환: 내부 tenant_id → tenant_ref 로 노출
+    # NicoHost contract compatibility: expose internal tenant_id as tenant_ref
     if "tenant_id" in v:
         v.setdefault("tenant_ref", v["tenant_id"])
     v.setdefault("tenant_ref", None)
@@ -289,7 +291,7 @@ class _SegmentBody(BaseModel):
     converged_vni: int
     host_ids: list = []
     allocation_id: Optional[str] = None
-    ib_pkey: Optional[int] = None     # NOCP가 부여한 테넌트 P_Key (값 싱크)
+    ib_pkey: Optional[int] = None     # tenant P_Key assigned by NOCP (value sync)
 
 
 def _seg_view(s: dict) -> dict:

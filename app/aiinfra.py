@@ -93,7 +93,7 @@ def reset_power(tray_id: str, reset_type: str = "On") -> Dict[str, Any]:
 
 # ── provisioning (PXE / DHCP) ──────────────────────────────────────────
 def provision(tray_id: str, planned: bool = False) -> Dict[str, Any]:
-    # planned=True: 오케스트레이션이 의도한 신규 개통 — 재프로비저닝 장애 아님
+    # planned=True: intended new bring-up by the orchestration — not a re-provisioning fault
     return _request("POST", f"/emulator/v1/provision/{tray_id}",
                     params={"planned": str(planned).lower()})
 

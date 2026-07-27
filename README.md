@@ -1,8 +1,9 @@
 # NICo Emulator — Site-Local Control Plane
 
-> **분리 이력**: 이 프로젝트는 [NeoCloud OS Control-Plane(nocp)](https://github.com/cscw95/NeoCloud-Control-Plane)
-> 내부의 NICo 에뮬레이션 기능을 **독립 신규 기능으로 분리**한 저장소다.
-> nocp은 `NOCP_NICO_URL`로 이 서비스(:9000)의 `/nico-bridge`에 접속해 실연동한다.
+> **Split history**: this project is a repository that **split the NICo emulation
+> functionality out of [NeoCloud OS Control-Plane (nocp)](https://github.com/cscw95/NeoCloud-Control-Plane)
+> into a standalone new component**. nocp connects to this service's (:9000)
+> `/nico-bridge` via `NOCP_NICO_URL` for live integration.
 
 Standalone emulator of the **NVIDIA Infra Controller (NICo)** *site-local control
 plane*. NICo owns **orchestration** — the NOCP host lifecycle (`/nico-bridge`),
