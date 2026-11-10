@@ -177,10 +177,16 @@ def lifecycle(m: Dict[str, Any]) -> str:
     if lc == "sanitizing" and time.time() >= m["_sanitize_until"]:
         m["_lifecycle"] = lc = "ready"
         history(m, "Ready", "sanitize complete")
+        h = bridge._hosts.get(m["id"])
+        if h is not None and h.get("state") == "released":   # REST wipe done → pool
+            h["state"] = "pool_ready"
     if lc in ("ready", "assigned"):
         h = bridge._hosts.get(m["id"])
         if h is not None:
-            return "assigned" if h.get("state") in BRIDGE_ASSIGNED or h.get("instance_id") else "ready"
+            if h.get("state") in BRIDGE_ASSIGNED or h.get("instance_id"):
+                return "assigned"
+            # released = tenant gone, wipe pending: never advertise it as Ready
+            return "sanitizing" if h.get("state") == "released" else "ready"
     return lc
 
 

@@ -119,7 +119,7 @@ Decommissioning, Decommissioned, Unknown`). The emulator also returns
 | `sanitizing` | `Reset` |
 | `failed` | `Error` |
 
-`/nico-bridge` host states map onto the same record: `pool_ready/released → ready`,
+`/nico-bridge` host states map onto the same record: `pool_ready → ready`, `released → sanitizing` (wipe pending, status `Reset`),
 `reserved/provisioning/provisioned/allocated → assigned`.
 
 ## Not emulated (present in spec.yaml)

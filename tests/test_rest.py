@@ -313,3 +313,23 @@ def test_reset_clears_rest_state(client):
     client.post("/emulator/v1/reset")
     assert client.get(f"{P}/vpc").json() == []
     assert client.get(f"{P}/tray/su-1-rack-00-tray-02").json()["leakStatus"] == "NoLeak"
+
+
+def test_bridge_released_host_is_not_advertised_ready(client, calls):
+    """A bridge-released host (wipe pending) shows as sanitizing/Reset on REST,
+    and Ready again only after the bridge sanitize finishes."""
+    vpc = _vpc(client)
+    inst = client.post(f"{P}/instance", json={"name": "i", "tenantId": "t-a", "vpcId": vpc["id"],
+                                              "instanceTypeId": _it(client)["id"]}).json()
+    mid = inst["machineId"]
+    bid = client.get(f"/nico-bridge/hosts/{mid}").json()["instance_id"]
+    assert client.delete(f"/nico-bridge/instances/{bid}").status_code == 200
+    assert client.get(f"/nico-bridge/hosts/{mid}").json()["state"] == "released"
+    m = client.get(f"{P}/machine/{mid}").json()
+    assert m["lifecycleState"] == "sanitizing" and m["status"] == "Reset"
+    job = client.post(f"/nico-bridge/hosts/{mid}/sanitize").json()
+    for _ in range(20):
+        if client.get(f"/nico-bridge/jobs/{job['job_id']}").json()["state"] != "running":
+            break
+    assert client.get(f"/nico-bridge/hosts/{mid}").json()["state"] == "pool_ready"
+    assert client.get(f"{P}/machine/{mid}").json()["status"] == "Ready"
