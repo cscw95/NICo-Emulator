@@ -16,7 +16,7 @@ import zlib
 from typing import Any, Dict, List, Optional
 
 from ..store import CLUSTER, COMPUTE_TRAYS, GPU_PER_TRAY
-from .. import bridge
+from .. import bridge, machine_events
 from .common import PROVIDER_ID, history, now, uid
 
 NVSWITCH_TRAYS = 9
@@ -179,6 +179,7 @@ def lifecycle(m: Dict[str, Any]) -> str:
     if lc == "sanitizing" and time.time() >= m["_sanitize_until"]:
         m["_lifecycle"] = lc = "ready"
         history(m, "Ready", "sanitize complete")
+        machine_events.emit(m, "ready")
         h = bridge._hosts.get(m["id"])
         if h is not None and h.get("state") == "released":   # REST wipe done → pool
             h["state"] = "pool_ready"
@@ -250,6 +251,7 @@ def set_lifecycle(m: Dict[str, Any], lc: str, message: str = "") -> None:
     if lc == "sanitizing":
         m["_sanitize_until"] = time.time() + sanitize_seconds()
     history(m, LIFECYCLE_STATUS[lc], message or f"lifecycle {lc}")
+    machine_events.emit(m, lc, message=message)      # F12 → DSX Exchange
 
 
 # ── trays / racks ─────────────────────────────────────────────────────

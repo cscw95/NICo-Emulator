@@ -16,7 +16,7 @@ physical state; otherwise it stays a pure control-plane record.
 import itertools
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from .store import STORE, _iso, site_name_of_tray
@@ -24,7 +24,25 @@ from . import aiinfra
 
 # Deprecated: NOCP moves to the NICo REST surface (/v2/org/{org}/nico, app/rest);
 # kept for back-compat and shares the same host/instance state.
-router = APIRouter(prefix="/nico-bridge", tags=["nocp-bridge"], deprecated=True)
+_calls = []                              # every HTTP call that reached the bridge
+
+
+def _count_call(request: Request) -> None:
+    """F08: NOCP writes moved to the REST surface — log any bridge use so e2e
+    can assert zero calls (GET /emulator/v1/bridge-calls)."""
+    rec = {"at": _iso(), "method": request.method, "path": request.url.path}
+    _calls.append(rec)
+    del _calls[:-500]
+    STORE.event("warning", "NICo.2.3.DeprecatedBridgeCall",
+                [request.method, request.url.path])
+
+
+def bridge_calls() -> dict:
+    return {"count": len(_calls), "calls": list(_calls[-50:])}
+
+
+router = APIRouter(prefix="/nico-bridge", tags=["nocp-bridge"], deprecated=True,
+                   dependencies=[Depends(_count_call)])
 
 # NICo-owned orchestration state (host_id -> record, job_id -> record)
 _hosts = {}
@@ -39,7 +57,7 @@ SANITIZE_STEPS = ["nvme_secure_erase", "gpu_memory_wipe", "system_memory_wipe",
 
 def reset_bridge():
     """Clear bridge-side lifecycle state (called by the emulator /reset)."""
-    _hosts.clear(); _jobs.clear(); _segments.clear()
+    _hosts.clear(); _jobs.clear(); _segments.clear(); _calls.clear()
 
 
 class _ProvisionBody(BaseModel):

@@ -206,3 +206,12 @@ def thermal(chassis_id: str) -> Dict[str, Any]:
     """Redfish ThermalSubsystem (incl. LeakDetection) — short read timeout."""
     return _request("GET", f"/redfish/v1/Chassis/{_q(chassis_id)}/ThermalSubsystem",
                     timeout=READ_TIMEOUT)
+
+
+# ── DSX Exchange (F12) ─────────────────────────────────────────────────
+def exchange_publish(topic: str, type_: str, subject: str, data: Dict[str, Any],
+                     severity: str = "info") -> Dict[str, Any]:
+    """Publish one event on the AI Infra DSX Exchange (POST /exchange/v1/publish)."""
+    return _request("POST", "/exchange/v1/publish",
+                    json={"topic": topic, "type": type_, "severity": severity,
+                          "subject": subject, "data": data})

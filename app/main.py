@@ -17,6 +17,7 @@ from .store import STORE
 from . import scenarios, bridge, sites
 from . import aiinfra
 from . import rest
+from . import machine_events
 from .versions import DSX_VERSIONS
 from . import security
 
@@ -41,6 +42,7 @@ for _r in rest.ROUTERS:
     app.include_router(_r)
 app.include_router(sites.router)
 app.include_router(scenarios.router)
+app.include_router(machine_events.router)
 
 
 @app.get("/healthz")
@@ -73,6 +75,7 @@ def reset(cascade: bool = False):
     STORE.reset()
     bridge.reset_bridge()
     rest.reset()
+    machine_events.reset()
     out = {"status": "reset", "scope": "nico-control-plane"}
     if cascade:
         try:
@@ -89,6 +92,12 @@ def reset(cascade: bool = False):
 def versions():
     """DSX OS baseline component matrix (PLAN.md — same in all 4 repos)."""
     return DSX_VERSIONS
+
+
+@app.get("/emulator/v1/bridge-calls")
+def bridge_calls():
+    """F08 DoD: HTTP calls that reached the deprecated /nico-bridge since reset."""
+    return bridge.bridge_calls()
 
 
 @app.get("/emulator/v1/events")
