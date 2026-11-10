@@ -17,6 +17,8 @@ from . import __version__
 from .store import STORE
 from . import scenarios, bridge, sites
 from . import aiinfra
+from . import rest
+from .versions import DSX_VERSIONS
 
 STATIC = Path(__file__).parent.parent / "static"
 
@@ -36,6 +38,8 @@ app.add_middleware(
 )
 
 app.include_router(bridge.router)
+for _r in rest.ROUTERS:
+    app.include_router(_r)
 app.include_router(sites.router)
 app.include_router(scenarios.router)
 
@@ -69,6 +73,7 @@ def reset(cascade: bool = False):
     state — used by NOCP's full-stack reset in the verification console."""
     STORE.reset()
     bridge.reset_bridge()
+    rest.reset()
     out = {"status": "reset", "scope": "nico-control-plane"}
     if cascade:
         try:
@@ -79,6 +84,12 @@ def reset(cascade: bool = False):
             out["ai_infra"] = {"status": "unreachable", "detail": str(e)[:160]}
         out["scope"] = "nico-control-plane+ai-infra"
     return out
+
+
+@app.get("/versions")
+def versions():
+    """DSX OS baseline component matrix (PLAN.md — same in all 4 repos)."""
+    return DSX_VERSIONS
 
 
 @app.get("/emulator/v1/events")

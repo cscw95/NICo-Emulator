@@ -169,3 +169,26 @@ def recover_dpu(dpu_id: str) -> Dict[str, Any]:
 
 def create_ipsec(dpu_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
     return _request("POST", f"/emulator/v1/dpus/{dpu_id}/ipsec-tunnels", json=body)
+
+
+# ── DSX OS / NICo v2.3 OOB actions (AI Infra Redfish, PLAN.md §A) ─────
+READ_TIMEOUT = float(os.environ.get("AI_INFRA_READ_TIMEOUT", "1.5"))
+
+
+def chassis_reset(chassis_id: str, reset_type: str = "PowerCycle") -> Dict[str, Any]:
+    """AC power cycle (or other chassis reset) of a tray chassis."""
+    return _request(
+        "POST", f"/redfish/v1/Chassis/{chassis_id}/Actions/Chassis.Reset",
+        json={"ResetType": reset_type})
+
+
+def gpu_reset(system_id: str) -> Dict[str, Any]:
+    """OOB GPU reset (NICo v2.3 AdminGpuReset) via the tray BMC."""
+    return _request("POST", f"/redfish/v1/Systems/{system_id}/Actions/GpuReset",
+                    json={})
+
+
+def thermal(chassis_id: str) -> Dict[str, Any]:
+    """Redfish ThermalSubsystem (incl. LeakDetection) — short read timeout."""
+    return _request("GET", f"/redfish/v1/Chassis/{chassis_id}/ThermalSubsystem",
+                    timeout=READ_TIMEOUT)

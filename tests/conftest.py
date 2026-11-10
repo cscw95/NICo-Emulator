@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.store import STORE
-from app import bridge, aiinfra
+from app import bridge, aiinfra, rest
 
 # Probe AI Infra once at collection time.
 _AI = aiinfra.ping()
@@ -19,6 +19,7 @@ AI_INFRA_UP = bool(_AI.get("reachable"))
 def _reset_nico():
     STORE.reset()
     bridge.reset_bridge()
+    rest.reset()
 
 
 @pytest.fixture(autouse=True)
@@ -38,6 +39,11 @@ def _isolate_ai_infra(monkeypatch):
     monkeypatch.setattr(aiinfra, "send_traffic", lambda *a, **k: {})
     monkeypatch.setattr(aiinfra, "inject_fault", lambda *a, **k: {})
     monkeypatch.setattr(aiinfra, "recover_dpu", lambda *a, **k: {})
+    monkeypatch.setattr(aiinfra, "chassis_reset", lambda *a, **k: {})
+    monkeypatch.setattr(aiinfra, "gpu_reset", lambda *a, **k: {})
+    monkeypatch.setattr(aiinfra, "thermal", lambda *a, **k: {})
+    monkeypatch.setattr(aiinfra, "ping", lambda: {"reachable": False, "url": "stub"})
+    monkeypatch.setenv("NICO_SANITIZE_SECONDS", "0")
 
 
 @pytest.fixture

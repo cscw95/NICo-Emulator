@@ -22,7 +22,9 @@ from pydantic import BaseModel
 from .store import STORE, _iso, site_name_of_tray
 from . import aiinfra
 
-router = APIRouter(prefix="/nico-bridge", tags=["nocp-bridge"])
+# Deprecated: NOCP moves to the NICo REST surface (/v2/org/{org}/nico, app/rest);
+# kept for back-compat and shares the same host/instance state.
+router = APIRouter(prefix="/nico-bridge", tags=["nocp-bridge"], deprecated=True)
 
 # NICo-owned orchestration state (host_id -> record, job_id -> record)
 _hosts = {}
