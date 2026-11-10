@@ -1,0 +1,145 @@
+{
+ "_source": "NVIDIA infra-controller rest-api/openapi/spec.yaml (Apache-2.0), components.schemas subset; copied from neocloud/ref/upstream/nico, descriptions/examples stripped",
+ "schemas": {
+  "ExpectedRackCreateRequest": {
+   "title": "ExpectedRackCreateRequest",
+   "type": "object",
+   "properties": {
+    "siteId": {
+     "type": "string",
+     "format": "uuid"
+    },
+    "rackId": {
+     "type": "string",
+     "minLength": 1
+    },
+    "rackProfileId": {
+     "type": "string",
+     "deprecated": true
+    },
+    "name": {
+     "type": [
+      "string",
+      "null"
+     ],
+     "minLength": 1
+    },
+    "labels": {
+     "$ref": "#/components/schemas/Labels"
+    }
+   },
+   "required": [
+    "siteId",
+    "rackId"
+   ]
+  },
+  "ExpectedRack": {
+   "title": "ExpectedRack",
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string",
+     "format": "uuid",
+     "readOnly": true
+    },
+    "rackId": {
+     "type": "string",
+     "readOnly": true
+    },
+    "siteId": {
+     "type": "string",
+     "format": "uuid",
+     "readOnly": true
+    },
+    "rackProfileId": {
+     "type": "string"
+    },
+    "rackGroupId": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "name": {
+     "type": "string"
+    },
+    "labels": {
+     "$ref": "#/components/schemas/Labels"
+    },
+    "created": {
+     "type": "string",
+     "format": "date-time",
+     "readOnly": true
+    },
+    "updated": {
+     "type": "string",
+     "format": "date-time",
+     "readOnly": true
+    }
+   }
+  },
+  "BringUpRackRequest": {
+   "title": "BringUpRackRequest",
+   "type": "object",
+   "required": [
+    "siteId"
+   ],
+   "properties": {
+    "siteId": {
+     "type": "string",
+     "format": "uuid"
+    },
+    "ruleId": {
+     "type": "string",
+     "format": "uuid"
+    },
+    "overrideReadinessCheck": {
+     "type": "boolean",
+     "default": false
+    }
+   }
+  },
+  "BringUpRackResponse": {
+   "title": "BringUpRackResponse",
+   "type": "object",
+   "properties": {
+    "taskIds": {
+     "type": "array",
+     "items": {
+      "type": "string",
+      "format": "uuid"
+     }
+    }
+   }
+  },
+  "NICoAPIError": {
+   "title": "NICoAPIError",
+   "type": "object",
+   "properties": {
+    "source": {
+     "type": "string"
+    },
+    "message": {
+     "type": "string"
+    },
+    "data": {
+     "type": [
+      "object",
+      "null"
+     ]
+    },
+    "retryable": {
+     "type": "boolean"
+    }
+   }
+  },
+  "Labels": {
+   "title": "Labels",
+   "type": "object",
+   "maxProperties": 10,
+   "additionalProperties": {
+    "type": "string"
+   }
+  }
+ }
+}

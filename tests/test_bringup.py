@@ -79,3 +79,65 @@ def test_attestation_uses_ai_infra_dpu_state(client, monkeypatch):
     assert a["dpu"] == {"dpuMachineId": "su-1-rack-00-tray-02-dpu-0", "attested": False,
                         "state": "FIRMWARE_UNTRUSTED", "source": "ai-infra"}
     assert a["attested"] is False
+
+
+# ── upstream contract (infra-controller spec.yaml / measured_boot.proto) ──
+from tests._oas import check, load  # noqa: E402
+
+S = load("nico_spec_subset.json")
+
+
+def _site_uuid(client):
+    return next(s["id"] for s in client.get(f"{P}/site").json() if s["name"] == "STT 가산")
+
+
+def test_expected_rack_matches_upstream_schema(client):
+    sid = _site_uuid(client)
+    req = {"siteId": sid, "rackId": "rack-new-07", "name": "Rack 07",
+           "description": "row R3",
+           "labels": {"chassis.manufacturer": "NVIDIA", "chassis.serial-number": "NVRK0007",
+                      "chassis.model": "VR-NVL72", "location.room": "R3",
+                      "location.position": "07"}}
+    assert check(req, S["ExpectedRackCreateRequest"], S) == []
+    r = client.post(f"{P}/expected-rack", json=req)
+    assert r.status_code == 201, r.text
+    assert check(r.json(), S["ExpectedRack"], S) == []
+    assert r.json()["rackId"] == "rack-new-07" and r.json()["siteId"] == sid
+    # rack discovered with machines expected
+    assert client.get(f"{P}/rack/rack-new-07").json()["serialNumber"] == "NVRK0007"
+    assert client.get(f"{P}/expected-rack").json()[0]["rackId"] == "rack-new-07"
+    assert client.get(f"{P}/expected-rack/rack-new-07").status_code == 200
+    dup = client.post(f"{P}/expected-rack", json=req)
+    assert dup.status_code == 409
+    assert check(dup.json()["detail"], S["NICoAPIError"], S) == []
+    assert client.post(f"{P}/expected-rack", json={"siteId": sid}).status_code == 400
+
+
+def test_rack_bringup_matches_upstream_schema(client):
+    sid = _site_uuid(client)
+    client.post(f"{P}/expected-rack", json={"siteId": sid, "rackId": "rack-b1"})
+    body = {"siteId": sid, "description": "Initial bring up"}
+    assert check(body, S["BringUpRackRequest"], S) == []
+    r = client.post(f"{P}/rack/rack-b1/bringup", json=body)
+    assert r.status_code == 200
+    assert check(r.json(), S["BringUpRackResponse"], S) == [] and len(r.json()["taskIds"]) == 1
+    assert client.get(f"{P}/rack/rack-b1").json()["taskStats"]["total"] == 1
+    assert client.post(f"{P}/rack/nope/bringup", json=body).status_code == 404
+    assert client.post(f"{P}/rack/rack-b1/bringup", json={}).status_code == 400
+
+
+def _proto_fields(message):
+    import json
+    from pathlib import Path
+    src = Path(__file__).parent / "fixtures" / "measured_boot_fields.json"
+    return json.loads(src.read_text())[message]
+
+
+def test_attestation_report_matches_measured_boot_proto(client):
+    a = client.get(f"{P}/machine/nh-su-1-rack-00-tray-00/attestation").json()
+    camel = lambda f: f.split("_")[0] + "".join(w.title() for w in f.split("_")[1:])  # noqa: E731
+    assert set(map(camel, _proto_fields("MeasurementReportPb"))) <= set(a["report"])
+    assert set(map(camel, _proto_fields("MeasurementReportValueRecordPb"))) <= \
+        set(a["report"]["values"][0])
+    assert a["state"] in _proto_fields("MeasurementMachineStatePb")
+    assert a["report"]["machineId"] == a["machineId"]

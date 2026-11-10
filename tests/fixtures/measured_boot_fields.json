@@ -1,0 +1,22 @@
+{
+ "_source": "NVIDIA infra-controller crates/rpc/proto/measured_boot.proto (Apache-2.0), field names only",
+ "MeasurementReportPb": [
+  "report_id",
+  "machine_id",
+  "values",
+  "ts"
+ ],
+ "MeasurementReportValueRecordPb": [
+  "value_id",
+  "report_id",
+  "pcr_register",
+  "sha_any",
+  "ts"
+ ],
+ "MeasurementMachineStatePb": [
+  "Discovered",
+  "PendingBundle",
+  "Measured",
+  "MeasuringFailed"
+ ]
+}
