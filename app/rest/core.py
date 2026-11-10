@@ -605,6 +605,9 @@ def run_validation(machineId: str, body: Optional[Dict[str, Any]] = Body(None)):
                         "context": "OnDemand", "exitCode": 1 if bad else 0,
                         "startTime": ts, "endTime": ts, "validationID": vid,
                         "testID": f"forge_{name}"})
+    if not body.get("skipHealthRules"):          # F28: catalog rules as validation tests
+        from .health_rules import run_results
+        results += run_results(m, vid, ts, allowed)
     ok = all(r["exitCode"] == 0 for r in results)
     run = {"validationID": vid, "machineID": m["id"], "startTime": ts, "endTime": ts,
            "name": f"Test_{m['id']}", "context": "OnDemand",
