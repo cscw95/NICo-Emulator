@@ -238,6 +238,10 @@ def machine(mid: str) -> Optional[Dict[str, Any]]:
         return ms[mid]
     if f"nh-{mid}" in ms:                # tray id accepted as alias
         return ms[f"nh-{mid}"]
+    if mid.startswith("nh-cpu-node-") and mid[12:].isdigit():   # NOCP CPU pool (seed.py)
+        sid = next(iter(inv()["sites"]))
+        ms[mid] = _new_machine(mid, sid, None, None, "ready", "cpu-epyc")
+        return ms[mid]
     if mid in bridge._hosts:            # bridge-only host (e.g. cpu-node-XX)
         h = bridge._hosts[mid]
         sid = next(iter(inv()["sites"]))

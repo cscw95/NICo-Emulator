@@ -173,3 +173,10 @@ def test_rest_responses_match_spec(client, published):
         assert errs == [], (name, errs[:5])
     for h in hist:
         assert validate(h, sc["StatusDetail"], spec) == []
+
+
+def test_cpu_pool_machine_on_rest(client, published):
+    m = client.get(f"{P}/machine/nh-cpu-node-03")
+    assert m.status_code == 200 and m.json()["controllerMachineType"] == "cpu-epyc"
+    assert m.json()["lifecycleState"] == "ready"
+    assert client.get(f"{P}/machine/nh-cpu-node-x").status_code == 404
