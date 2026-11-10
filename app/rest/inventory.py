@@ -20,7 +20,7 @@ from .. import bridge
 from .common import PROVIDER_ID, history, now, uid
 
 NVSWITCH_TRAYS = 9
-POWER_SHELVES = 8
+POWER_SHELVES = 4            # 4 × 110 kW shelves per VR NVL72 rack (NOCP spec, AI-Infra power_model)
 
 # lifecycleState -> spec MachineStatus
 LIFECYCLE_STATUS = {

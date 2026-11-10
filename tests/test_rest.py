@@ -225,10 +225,10 @@ def test_rack_tray_nvlink_and_leak(client):
     racks = client.get(f"{P}/rack?siteId=gasan&pageSize=100")
     assert json.loads(racks.headers["X-Pagination"])["total"] == 36
     rack = client.get(f"{P}/rack/su-1-rack-00").json()
-    assert rack["nvLinkDomainIds"] == ["nvl-su-1-rack-00"] and len(rack["components"]) == 35
+    assert rack["nvLinkDomainIds"] == ["nvl-su-1-rack-00"] and len(rack["components"]) == 18 + 9 + 4
     assert rack["health"]["status"] in ("OK", "Warning")
     shelves = client.get(f"{P}/tray?rackId=su-1-rack-00&type=PowerShelf").json()
-    assert len(shelves) == 8 and shelves[0]["nvLinkDomainId"] is None
+    assert len(shelves) == 4 and shelves[0]["nvLinkDomainId"] is None
     dom = client.get(f"{P}/domain/nvlink/nvl-su-1-rack-00").json()
     assert dom["gpus"] == 72 and dom["topology"] == "NVL72"
     # leak on a compute tray → Flow shuts it down, rack Critical, machine unusable
@@ -287,7 +287,7 @@ def test_firmware_baseline_and_drift(client):
     # raising the baseline makes the whole fleet drift for that component
     client.put(f"{P}/firmware/baseline", json={"baseline": {"PowerShelf": {"PSU": "3.5.0"}}})
     assert client.get(f"{P}/firmware/baseline").json()["baseline"]["PowerShelf"]["PSU"] == "3.5.0"
-    assert client.get(f"{P}/firmware/drift").json()["total"] >= 140 * 8
+    assert client.get(f"{P}/firmware/drift").json()["total"] >= 140 * 4
     assert client.put(f"{P}/firmware/baseline", json={"Bogus": {}}).status_code == 400
 
 
