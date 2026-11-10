@@ -166,3 +166,10 @@ def test_leak_on_tray_is_critical(client):
     assert client.post(f"/emulator/v1/rest/trays/{tray}/leak", json={"leaking": True}).status_code == 200
     v = _verdict(client, mid)
     assert "node-leak" in [c["check_id"] for c in v["check_results"] if c["severity"] == "CRITICAL"]
+
+
+def test_rules_match_neocloud_ext_schema(client):
+    schema = json.loads((pathlib.Path(__file__).parent / "contracts" /
+                         "health-validation-rule.schema.json").read_text())
+    for rule in client.get(HV).json():
+        assert validate(rule, schema) == [], (rule["name"], validate(rule, schema))
