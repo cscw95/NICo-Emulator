@@ -6,6 +6,7 @@ DELETE → 202, errors ``{"source": "nico", "message": ..., "data": null}``.
 See docs/nico-rest-paths.md.
 """
 import json
+import os
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -16,6 +17,8 @@ PREFIX = "/v2/org/{org}/nico"
 DEFAULT_ORG = "neocloud"
 PROVIDER_ID = str(uuid.uuid5(uuid.NAMESPACE_URL, "nico/provider/neocloud"))
 MAX_PAGE = 100
+# DoS guard for the in-memory store: max created objects per kind.
+MAX_OBJECTS = int(os.environ.get("NICO_MAX_OBJECTS", "10000"))
 
 
 def now() -> str:
@@ -60,6 +63,8 @@ def public(obj: Dict[str, Any]) -> Dict[str, Any]:
 
 def new_obj(kind: str, body: Dict[str, Any], status: str = "Ready",
             **extra) -> Dict[str, Any]:
+    if len(OBJ.get(kind, {})) >= MAX_OBJECTS:
+        err(503, f"{kind} limit ({MAX_OBJECTS}) reached")
     ts = now()
     obj = {"id": uid(kind), **{k: v for k, v in body.items() if v is not None},
            **extra, "created": ts, "updated": ts, "statusHistory": []}

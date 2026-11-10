@@ -10,7 +10,6 @@ which NICo drives over REST (``app.aiinfra``).
 """
 from pathlib import Path
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from . import __version__
@@ -19,6 +18,7 @@ from . import scenarios, bridge, sites
 from . import aiinfra
 from . import rest
 from .versions import DSX_VERSIONS
+from . import security
 
 STATIC = Path(__file__).parent.parent / "static"
 
@@ -29,13 +29,12 @@ app = FastAPI(
                 "plane. Orchestrates the fleet via NeoCloud OS (NOCP) and "
                 "delegates physical state to the AI Infra Emulator (:9100).")
 
-# NeoCloud OS control-plane (nocp :8000) + consoles (:8090) may call this service
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://127.0.0.1:8000", "http://127.0.0.1:8090",
-                   "http://localhost:8000", "http://localhost:8090"],
-    allow_methods=["*"], allow_headers=["*"],
-)
+# NeoCloud OS control-plane (nocp :8000) + consoles (:8090) may call this
+# service. Origins via EMU_CORS_ORIGINS; optional API key and request limits
+# via app.security (all off by default).
+app.add_middleware(security.SecurityMiddleware)
+security.add_cors(app, ["http://127.0.0.1:8000", "http://127.0.0.1:8090",
+                        "http://localhost:8000", "http://localhost:8090"])
 
 app.include_router(bridge.router)
 for _r in rest.ROUTERS:

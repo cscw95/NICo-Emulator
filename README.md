@@ -173,3 +173,15 @@ static/index.html    single-page control-plane dashboard
 docs/nico-rest-paths.md  implemented spec.yaml paths (NOCP contract)
 tests/               pytest suite (bridge / sites / scenarios / REST contract)
 ```
+
+## Security hardening (opt-in, `app/security.py`)
+
+Defaults are off; same env names as AI-Infra-Emulator.
+
+| Env | Effect |
+|---|---|
+| `EMU_API_KEY` | POST/PUT/PATCH/DELETE (incl. scenarios inject/recover, `/nico-bridge/*`) need `X-API-Key` or `Authorization: Bearer` |
+| `AI_INFRA_API_KEY` | sent as `X-API-Key` on calls to AI-Infra when that service enforces `EMU_API_KEY` |
+| `EMU_OUTBOUND_ALLOWLIST` | hosts / CIDRs / `.suffix` allowed for `AI_INFRA_URL` (default `localhost,127.0.0.1,::1`); link-local / metadata IPs always refused; path ids are percent-encoded |
+| `EMU_CORS_ORIGINS` | allowed browser origins (default localhost :8000/:8090) |
+| `EMU_MAX_BODY_BYTES` (1 MiB), `EMU_MAX_PAGE` (10000), `NICO_MAX_OBJECTS` (10000 per kind) | request and store caps |
