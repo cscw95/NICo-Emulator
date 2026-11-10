@@ -22,16 +22,81 @@ Consoles(:8090) → NOCP(:8000) → NICo(:9000) → AI Infra(:9100, physical twi
 bash run.sh        # http://127.0.0.1:9000  (dashboard at /, OpenAPI at /docs)
 ```
 
-Uses the NOCP virtualenv by default (`~/nocp/.venv`); set `PYTHON=...` to override.
+Uses `./.venv` when present, else `python3`; set `PYTHON=...` to override.
 The AI Infra Emulator location is `AI_INFRA_URL` (default `http://127.0.0.1:9100`).
 NICo runs without :9100, but physical effects and fleet views are unavailable
 until it is reachable (see `/healthz` → `ai_infra.reachable`).
+
+## DSX OS baseline version matrix
+
+Same matrix in all four NeoCloud repos (`GET /versions`):
+
+| Component | Version |
+|-----------|---------|
+| DSX OS | 2026.05 |
+| NICo (NVIDIA Infra Controller) | 2.3.0 |
+| NVKE | 0.23.1 |
+| DPS (Dynamic Power Software) | 0.10 |
+| Mission Control | 2.5 |
+| DOCA | 3.x |
+| GPU Operator | AICR recipe |
+| Kubernetes | 1.33, 1.34 |
+| Platform | Vera Rubin NVL72 |
+
+## NICo REST API (`/v2/org/{org}/nico`, NICo v2.3)
+
+Paths and resource names follow the real
+[`dsx-ai-factory/infra-controller`](https://github.com/dsx-ai-factory/infra-controller)
+`rest-api/openapi/spec.yaml`. Full path table, conventions and the machine
+state mapping: **[docs/nico-rest-paths.md](docs/nico-rest-paths.md)**.
+`{org}` is any string (default `neocloud`); auth headers are accepted but not
+checked; lists are JSON arrays with an `X-Pagination` header.
+
+| Area | Endpoints (under `/v2/org/{org}/nico`) |
+|------|-----------|
+| Provider / site | `GET /metadata`, `GET /infrastructure-provider/current`, `GET /tenant/current`, `GET\|POST /site`, `GET\|PATCH\|DELETE /site/{siteId}`, `GET /site/{siteId}/status-history`, `GET /site/{siteId}/health-probe`* |
+| Allocation | `GET\|POST /allocation`, `GET\|PATCH\|DELETE /allocation/{id}`, `PATCH /allocation/{id}/constraint/{constraintId}` |
+| Instance type | `GET\|POST /instance/type`, `GET\|PATCH\|DELETE /instance/type/{id}`, `GET\|POST /instance/type/{id}/machine` |
+| Expected inventory | `GET\|POST /expected-machine`, `GET\|PATCH\|DELETE /expected-machine/{id}`, `GET\|POST /expected-power-shelf`, `GET\|PATCH\|DELETE /expected-power-shelf/{id}` |
+| Machine | `GET /machine`, `GET\|PATCH\|DELETE /machine/{id}`, `PATCH /machine/{id}/power` (`ACPowercycle` …), `PATCH /machine/{id}/chassis/{chassisId}/reset`, `PATCH /machine/{id}/bmc/reset`, `POST /machine/{id}/gpu/reset`*, `GET\|PUT /machine/{id}/health-report`, `DELETE /machine/{id}/health-report/{source}`, `GET\|POST /machine/{id}/validation/run`, `GET /machine/{id}/validation/result`, `GET /machine/{id}/status-history`, `POST /machine/{id}/decommission`, `GET /machine/gpu/stats` |
+| Instance | `GET\|POST /instance`, `GET\|PATCH\|DELETE /instance/{id}`, `GET /instance/{id}/status-history` |
+| OS / SSH | `GET\|POST /operating-system`, `GET\|PATCH\|DELETE /operating-system/{id}`, `GET\|POST /sshkeygroup`, `GET\|PATCH\|DELETE /sshkeygroup/{id}`, `GET\|POST /sshkey`, `GET\|PATCH\|DELETE /sshkey/{id}` |
+| Network | `vpc`, `subnet`, `network-security-group`, `infiniband-partition`, `nvlink-logical-partition` (each `GET\|POST /x`, `GET\|PATCH\|DELETE /x/{id}`), `spectrumx-partition` (`GET\|POST`, `GET\|DELETE /{id}`) |
+| Rack (v2.3) | `GET /rack`, `GET /rack/{id}`, `GET /rack/validation`, `GET\|PUT /rack/{id}/health-report`, `DELETE /rack/{id}/health-report/{source}`, `GET /rack/{id}/validation`, `PATCH /rack/{id}/power`, `PATCH /rack/{id}/firmware` |
+| Tray (v2.3) | `GET /tray` (`type=Compute\|NVSwitch\|PowerShelf`, `rackId`), `GET /tray/{id}` (`leakStatus`), `GET /tray/validation`, `GET\|PUT /tray/{id}/health-report`, `DELETE /tray/{id}/health-report/{source}`, `GET /tray/{id}/validation`, `GET\|PATCH /tray/{id}/power`, `PATCH /tray/{id}/firmware` |
+| NVLink domain | `GET /domain/nvlink`, `GET /domain/nvlink/{id}` |
+| Firmware | `GET\|PUT /firmware/baseline`*, `GET /firmware/drift`* |
+
+\* emulator extension (not in spec.yaml). Outside the prefix: `GET /versions`,
+`POST /emulator/v1/rest/trays/{id}/leak` (leak fault hook),
+`POST /emulator/v1/rest/machines/{id}/advance` (Day-0 lifecycle step).
+
+**Machine lifecycle.** `status` is the spec enum; `lifecycleState` (extension)
+follows `expected → discovered → validating → ready → assigned → sanitizing →
+ready | failed`. Expected machines start at `expected`; a validation run moves
+them to `ready` (or `failed` → `Error`). Creating an Instance assigns a `Ready`
+machine (`InUse`); deleting it sanitizes the machine (`Reset`, `NICO_SANITIZE_SECONDS`,
+default 2) and returns it to `Ready`. Alerts classified `PreventAllocations`
+(health reports, leaks) block allocation.
+
+**OOB actions → AI Infra Redfish.** `ACPowercycle` / chassis reset →
+`POST /redfish/v1/Chassis/{tray}/Actions/Chassis.Reset {"ResetType":"PowerCycle"}`;
+GPU reset → `POST /redfish/v1/Systems/{tray}/Actions/GpuReset`; other power
+actions → `ComputerSystem.Reset`; tray leak status reads
+`GET /redfish/v1/Chassis/{tray}/ThermalSubsystem` (`LeakDetection`). All are
+best-effort: when :9100 is down the response says `"delegated": false`.
+
+**Shared state with the bridge.** Machine id = bridge host id (`nh-{trayId}`).
+A REST Instance runs the bridge allocation (AI Infra DPU tenant attachment) and
+uses the bridge instance id, so `/nico-bridge` and REST see the same hosts and
+instances; either side can release.
 
 ## What it owns (control plane)
 
 | Domain | Surface | Highlights |
 |--------|---------|-----------|
-| **NOCP bridge** | `/nico-bridge/...` | The exact contract NOCP's `NicoHttpAdapter` speaks: `/hosts` (full 2,520-tray fleet), `/instances`, `/jobs`, `/segments` with NicoHost/NicoJob/NicoSegment shapes |
+| **NICo REST** | `/v2/org/{org}/nico/...` | spec.yaml paths (see above) — the surface NOCP uses with `NOCP_NICO_API=rest` |
+| **NOCP bridge** *(deprecated)* | `/nico-bridge/...` | The exact contract NOCP's `NicoHttpAdapter` speaks: `/hosts` (full 2,520-tray fleet), `/instances`, `/jobs`, `/segments` with NicoHost/NicoJob/NicoSegment shapes |
 | **Site controllers** | `/emulator/v1/sites/...` | Per-site NICo instance view; fleet aggregated from AI Infra racks |
 | **Scenarios** | `/emulator/v1/scenarios/...` | 5 built-in DPU-isolation fault scenarios (design §12), executed against AI Infra DPUs |
 | **Health / twin proxy** | `/healthz`, `/emulator/v1/twin` | AI Infra reachability + delegated physical overview |
@@ -77,7 +142,8 @@ Each scenario drives the real AI Infra isolation engine over REST and returns
 
 ```bash
 # in the nocp repo
-NOCP_NICO_URL=http://127.0.0.1:9000/nico-bridge ./run.sh
+NOCP_NICO_URL=http://127.0.0.1:9000/nico-bridge ./run.sh      # deprecated bridge
+# NICo REST (NOCP_NICO_API=rest): base http://127.0.0.1:9000/v2/org/neocloud/nico
 ```
 
 NOCP's provisioning lifecycle (reserve → provision → allocate → cordon → sanitize)
@@ -86,7 +152,8 @@ drives NICo, which reflects the physical effects on AI Infra (:9100).
 ## Tests
 
 ```bash
-~/nocp/.venv/bin/python -m pytest tests/ -q      # 16 passed
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python -m pytest tests/ -q            # 31 passed
 ```
 
 Integration tests that need real physical effects auto-skip when :9100 is down.
@@ -99,7 +166,10 @@ app/store.py         NICo control-plane state (event log + id gen + site topolog
 app/bridge.py        NOCP NicoHttpAdapter-compatible bridge (delegates to AI Infra)
 app/sites.py         per-site NICo controller view (fleet from AI Infra)
 app/scenarios.py     DPU-isolation fault scenarios (run against AI Infra DPUs)
+app/rest/            NICo REST /v2/org/{org}/nico (inventory, core, network, rack)
+app/versions.py      DSX OS baseline version matrix (/versions)
 app/main.py          FastAPI app (CORS for :8000/:8090) + healthz + dashboard
 static/index.html    single-page control-plane dashboard
-tests/               pytest suite (bridge / sites / scenarios contract)
+docs/nico-rest-paths.md  implemented spec.yaml paths (NOCP contract)
+tests/               pytest suite (bridge / sites / scenarios / REST contract)
 ```

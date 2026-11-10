@@ -21,10 +21,17 @@ Consoles(:8090) → NOCP(:8000) → NICo(:9000) → AI Infra(:9100, physical twi
 bash run.sh        # http://127.0.0.1:9000  (dashboard at /, OpenAPI at /docs)
 ```
 
-Uses the NOCP virtualenv by default (`~/nocp/.venv`); set `PYTHON=...` to override.
+`./.venv`가 있으면 그것을, 없으면 `python3`를 씁니다. `PYTHON=...`으로 바꿀 수 있습니다.
 The AI Infra Emulator location is `AI_INFRA_URL` (default `http://127.0.0.1:9100`).
 NICo runs without :9100, but physical effects and fleet views are unavailable
 until it is reachable (see `/healthz` → `ai_infra.reachable`).
+
+
+## DSX OS 기준 버전과 NICo REST API
+
+- 기준 버전 매트릭스는 `GET /versions`로 조회합니다: DSX OS 2026.05, NICo 2.3.0, NVKE 0.23.1, DPS 0.10, Mission Control 2.5, DOCA 3.x, GPU Operator AICR recipe, Kubernetes 1.33·1.34, Vera Rubin NVL72.
+- NICo REST는 실제 `dsx-ai-factory/infra-controller`의 `rest-api/openapi/spec.yaml`과 같은 경로 접두어 **`/v2/org/{org}/nico`** 와 리소스 이름을 씁니다. 구현된 경로 전체와 규칙은 [docs/nico-rest-paths.md](docs/nico-rest-paths.md), 엔드포인트 표는 [README.md](README.md#nico-rest-api-v2orgorgnico-nico-v23)에 있습니다.
+- `/nico-bridge/*`는 하위 호환을 위해 유지하지만 deprecated입니다. REST와 bridge는 같은 상태를 공유합니다(Machine id = bridge host id `nh-{trayId}`).
 
 ## What it owns (control plane)
 
@@ -85,7 +92,8 @@ drives NICo, which reflects the physical effects on AI Infra (:9100).
 ## Tests
 
 ```bash
-~/nocp/.venv/bin/python -m pytest tests/ -q      # 16 passed
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python -m pytest tests/ -q            # 31 passed
 ```
 
 Integration tests that need real physical effects auto-skip when :9100 is down.
