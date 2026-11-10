@@ -521,7 +521,50 @@ def gpu_reset(machineId: str, body: Optional[Dict[str, Any]] = Body(None)):
     _assert_ack(m, body or {})
     res = _ai(aiinfra.gpu_reset, m.get("_trayId") or m["id"])
     STORE.event("warning", "NICo.2.3.AdminGpuReset", [m["id"]])
-    return {"message": "Machine GPU reset request was accepted", **res}
+    # F10: a reset clears a transient GPU fault (its health report); a
+    # persistent one survives, so re-validation fails and NOCP replaces the node.
+    fault = m.get("_gpuFault")
+    result = "Succeeded"
+    if fault:
+        if fault.get("persistent"):
+            result = "Failed"
+        else:
+            m.pop("_gpuFault", None)
+            m["_reports"].pop(GPU_FAULT_SOURCE, None)
+    history(m, m["status"], f"gpu reset {result}")
+    return {"message": "Machine GPU reset request was accepted", "resetResult": result,
+            **res}
+
+
+GPU_FAULT_SOURCE = "gpu-health-monitor"
+
+
+@router.post("/machine/{machineId}/gpu/fault", status_code=201)
+def gpu_fault(machineId: str, body: Optional[Dict[str, Any]] = Body(None)):
+    """Emulator extension (x-neocloud, F10) — inject a GPU XID fault as an
+    NVSentinel gpu-health-monitor health report (PreventAllocations).
+    ``persistent`` faults survive ``gpu/reset``. DELETE clears it."""
+    m = _machine(machineId)
+    body = body or {}
+    xid = int(body.get("xid", 79))
+    gpu = int(body.get("gpu", 0))
+    m["_gpuFault"] = {"xid": xid, "gpu": gpu, "persistent": bool(body.get("persistent"))}
+    e = {"source": GPU_FAULT_SOURCE, "mode": "Merge", "triggeredBy": "fault-injection",
+         "observedAt": now(), "successes": [],
+         "alerts": [{"id": "GpuXid", "target": f"GPU{gpu}", "inAlertSince": now(),
+                     "message": f"XID {xid} on GPU{gpu}", "tenantMessage": None,
+                     "classifications": ["PreventAllocations"]}]}
+    m["_reports"][GPU_FAULT_SOURCE] = e
+    STORE.event("warning", "NICo.2.3.MachineHealthReport", [m["id"], GPU_FAULT_SOURCE, 1])
+    return {"machineId": m["id"], **m["_gpuFault"], "healthReport": e}
+
+
+@router.delete("/machine/{machineId}/gpu/fault", status_code=202)
+def clear_gpu_fault(machineId: str):
+    m = _machine(machineId)
+    m.pop("_gpuFault", None)
+    m["_reports"].pop(GPU_FAULT_SOURCE, None)
+    return {"message": "GPU fault cleared"}
 
 
 @router.post("/machine/{machineId}/decommission", status_code=202)
