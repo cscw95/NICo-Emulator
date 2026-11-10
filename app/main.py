@@ -19,6 +19,7 @@ from . import aiinfra
 from . import rest
 from .versions import DSX_VERSIONS
 from . import security
+from . import jwt_auth
 
 STATIC = Path(__file__).parent.parent / "static"
 
@@ -33,6 +34,8 @@ app = FastAPI(
 # service. Origins via EMU_CORS_ORIGINS; optional API key and request limits
 # via app.security (all off by default).
 app.add_middleware(security.SecurityMiddleware)
+# F07: NOCP OIDC JWTs next to the API key (outside security, inside CORS)
+app.add_middleware(jwt_auth.JwtAuthMiddleware)
 security.add_cors(app, ["http://127.0.0.1:8000", "http://127.0.0.1:8090",
                         "http://localhost:8000", "http://localhost:8090"])
 
