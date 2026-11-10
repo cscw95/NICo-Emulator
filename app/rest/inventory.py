@@ -32,9 +32,11 @@ LIFECYCLE_STATUS = {
 LIFECYCLE_NEXT = {"expected": "discovered", "discovered": "validating"}
 BRIDGE_ASSIGNED = ("reserved", "provisioning", "provisioned", "allocated")
 
-# fleet firmware baseline per tray type (component -> version)
+# fleet firmware baseline per tray type (component -> version). Compute BMC is the
+# Dell iDRAC10: must equal AI-Infra app/dell.py IDRAC_FW (Redfish Manager FirmwareVersion).
+IDRAC10_FW = "1.4.2"
 DEFAULT_BASELINE = {
-    "Compute": {"BMC": "25.10-1", "BIOS": "2.3.1", "GPU": "97.10.42", "DPU": "45.2.1000"},
+    "Compute": {"BMC": IDRAC10_FW, "BIOS": "2.3.1", "GPU": "97.10.42", "DPU": "45.2.1000"},
     "NVSwitch": {"BMC": "25.10-1", "NVOS": "25.02.2210"},
     "PowerShelf": {"PSU": "3.4.0"},
 }
