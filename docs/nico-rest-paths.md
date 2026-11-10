@@ -137,3 +137,20 @@ vpc-peering, vpc-prefix, interface lists, expected-rack/switch/rack-group, sku,
 instance batch, dpu, dpu-extension-service, machine-capability, task/task rule,
 rack bringup, batch rack/tray/nvlink power & firmware, ipxe-template, audit, user,
 firmware-config/host, tenant-identity, `.well-known/*`.
+
+## F28 Health Validation rules (NeoCloud extension, `x-neocloud`)
+
+Upstream has no rule CRUD (health-validation @ cc26732a510f ships rules in its catalog).
+Routes below are marked `x-neocloud` in OpenAPI and with header `X-NeoCloud-Extension`.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/x-neocloud/health-validation/rules` | 8 seeded rules (XID, ECC DBE, row remap, thermal, NVLink CRC, IB link, GPU count, leak) |
+| GET/PUT/DELETE | `/x-neocloud/health-validation/rules/{name}` | `{name, expr (CEL, true = fault present), sensors, severity, category, thresholds, enabled}` |
+| POST | `/x-neocloud/health-validation/rules:evaluate` | dry run against `machineId` or `observations` |
+| GET | `/machine/{machineId}/x-neocloud/observations` | DCGM-named signals per GPU + node signals |
+| GET | `/machine/{machineId}/x-neocloud/health-verdict` | NodeVerdict, `node-verdict.schema.json` 0.5 |
+| PUT/DELETE | `/emulator/v1/rest/machines/{id}/observations` | fault injection `{signals:{...}, gpu?}` |
+
+`POST /machine/{id}/validation/run` adds one MachineValidationResult per enabled rule
+(`testID = neocloud_hv_<rule>`); CRITICAL/UNKNOWN fails the run. `skipHealthRules: true` skips them.

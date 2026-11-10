@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neocloud.example/schemas/health-validation-rule.v1.json",
+  "title": "NeoCloud Health Validation rule (F28)",
+  "x-neocloud": true,
+  "description": "NeoCloud extension. dsx-ai-factory/health-validation@cc26732a510f ships checks in its catalog (catalog/catalog.go, checks.go) and has no rule CRUD API. NICo exposes them as /v2/org/{org}/nico/x-neocloud/health-validation/rules. expr is a CEL (google/cel-spec subset) predicate that is true when the fault is present; a matching rule sets the check's severity in the NodeVerdict (node-verdict.schema.json 0.5). category, conditionScope and severity reuse the NodeVerdict enums.",
+  "type": "object",
+  "required": ["name", "expr", "sensors", "severity", "category", "conditionScope", "thresholds", "enabled", "x-neocloud"],
+  "properties": {
+    "name": {"type": "string", "minLength": 1},
+    "expr": {"type": "string", "minLength": 1},
+    "sensors": {"type": "array", "items": {"type": "string"}},
+    "severity": {"type": "string", "enum": ["INFO", "WARNING", "UNKNOWN", "CRITICAL"]},
+    "category": {"type": "string", "enum": ["gpu", "nvlink", "pcie", "infiniband", "storage", "node", "xid", "cpu"]},
+    "conditionScope": {"type": "string", "enum": ["NODE", "DOMAIN", "CLUSTER"]},
+    "thresholds": {"type": "object"},
+    "defaults": {"type": "object", "properties": {"thresholds": {"type": "object"}}},
+    "enabled": {"type": "boolean"},
+    "description": {"type": "string"},
+    "remediation": {"type": "array", "items": {"type": "string"}},
+    "maturityLevel": {"type": "string", "enum": ["stable", "experimental"]},
+    "nvidiaEndorsed": {"type": "boolean"},
+    "updated": {"type": "string"},
+    "x-neocloud": {"const": true}
+  }
+}
