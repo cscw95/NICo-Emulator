@@ -152,8 +152,8 @@ drives NICo, which reflects the physical effects on AI Infra (:9100).
 ## Tests
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m pytest tests/ -q            # 31 passed
+python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt   # Python >= 3.10 (starlette 1.x)
+.venv/bin/python -m pytest tests/ -q            # 38 passed
 ```
 
 Integration tests that need real physical effects auto-skip when :9100 is down.
