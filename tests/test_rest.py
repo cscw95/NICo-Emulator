@@ -350,3 +350,12 @@ def test_gpu_fault_reset_transient_vs_persistent(client, calls):
     assert client.get(f"{P}/machine/{mid}").json()["health"]["alerts"]
     assert client.delete(f"{P}/machine/{mid}/gpu/fault").status_code == 202
     assert not client.get(f"{P}/machine/{mid}").json()["health"]["alerts"]
+
+
+def test_gpu_fault_cleared_by_reboot(client, calls):
+    mid = client.get(f"{P}/machine").json()[0]["id"]
+    client.post(f"{P}/machine/{mid}/gpu/fault", json={"xid": 79})
+    r = client.patch(f"{P}/machine/{mid}/power", json={"action": "ForceRestart",
+                                                       "acknowledgeAttachedInstance": True})
+    assert r.json()["resetResult"] == "Succeeded"
+    assert not client.get(f"{P}/machine/{mid}").json()["health"]["alerts"]

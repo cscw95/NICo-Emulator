@@ -495,7 +495,10 @@ def machine_power(machineId: str, body: Dict[str, Any] = Body(...)):
         res = _ai(aiinfra.reset_power, tray, POWER_ACTIONS[action])
         STORE.event("info", "NICo.2.3.MachinePowerControl", [m["id"], action])
     history(m, m["status"], f"power {action}")
-    return {"message": "Machine power control request was accepted", "action": action, **res}
+    out = {"message": "Machine power control request was accepted", "action": action, **res}
+    if m.get("_gpuFault") and ("Restart" in action or "cycle" in action.lower()):
+        out["resetResult"] = _clear_gpu_fault(m)      # F10 RebootNode path
+    return out
 
 
 @router.patch("/machine/{machineId}/chassis/{chassisId}/reset", status_code=202)
@@ -523,20 +526,23 @@ def gpu_reset(machineId: str, body: Optional[Dict[str, Any]] = Body(None)):
     STORE.event("warning", "NICo.2.3.AdminGpuReset", [m["id"]])
     # F10: a reset clears a transient GPU fault (its health report); a
     # persistent one survives, so re-validation fails and NOCP replaces the node.
-    fault = m.get("_gpuFault")
-    result = "Succeeded"
-    if fault:
-        if fault.get("persistent"):
-            result = "Failed"
-        else:
-            m.pop("_gpuFault", None)
-            m["_reports"].pop(GPU_FAULT_SOURCE, None)
+    result = _clear_gpu_fault(m)
     history(m, m["status"], f"gpu reset {result}")
     return {"message": "Machine GPU reset request was accepted", "resetResult": result,
             **res}
 
 
 GPU_FAULT_SOURCE = "gpu-health-monitor"
+
+
+def _clear_gpu_fault(m: Dict[str, Any]) -> str:
+    """Reset/reboot outcome: a transient fault clears, a persistent one stays."""
+    fault = m.get("_gpuFault")
+    if fault and fault.get("persistent"):
+        return "Failed"
+    m.pop("_gpuFault", None)
+    m["_reports"].pop(GPU_FAULT_SOURCE, None)
+    return "Succeeded"
 
 
 @router.post("/machine/{machineId}/gpu/fault", status_code=201)
