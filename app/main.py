@@ -21,6 +21,7 @@ from . import machine_events
 from .versions import DSX_VERSIONS
 from . import security
 from . import jwt_auth
+from . import prom_metrics  # F26 Prometheus exposition
 
 STATIC = Path(__file__).parent.parent / "static"
 
@@ -46,6 +47,7 @@ for _r in rest.ROUTERS:
 app.include_router(sites.router)
 app.include_router(scenarios.router)
 app.include_router(machine_events.router)
+app.include_router(prom_metrics.router)   # F26 /metrics
 
 
 @app.get("/healthz")
