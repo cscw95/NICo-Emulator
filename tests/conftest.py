@@ -42,6 +42,8 @@ def _isolate_ai_infra(monkeypatch):
     monkeypatch.setattr(aiinfra, "recover_dpu", lambda *a, **k: {})
     monkeypatch.setattr(aiinfra, "chassis_reset", lambda *a, **k: {})
     monkeypatch.setattr(aiinfra, "gpu_reset", lambda *a, **k: {})
+    monkeypatch.setattr(aiinfra, "gpu_fault_inject", lambda *a, **k: {})
+    monkeypatch.setattr(aiinfra, "gpu_fault_recover", lambda *a, **k: {})
     monkeypatch.setattr(aiinfra, "thermal", lambda *a, **k: {})
     monkeypatch.setattr(aiinfra, "ping", lambda: {"reachable": False, "url": "stub"})
     monkeypatch.setattr(aiinfra, "exchange_publish", lambda *a, **k: {"id": 1})

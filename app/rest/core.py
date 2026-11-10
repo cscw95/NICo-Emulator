@@ -562,7 +562,10 @@ def gpu_fault(machineId: str, body: Optional[Dict[str, Any]] = Body(None)):
                      "classifications": ["PreventAllocations"]}]}
     m["_reports"][GPU_FAULT_SOURCE] = e
     STORE.event("warning", "NICo.2.3.MachineHealthReport", [m["id"], GPU_FAULT_SOURCE, 1])
-    return {"machineId": m["id"], **m["_gpuFault"], "healthReport": e}
+    # Same fault on the AI-Infra tray twin (DCGM XID, Redfish health, GpuReset Task).
+    twin = _ai(aiinfra.gpu_fault_inject, m.get("_trayId") or m["id"], gpu, xid,
+               not m["_gpuFault"]["persistent"])
+    return {"machineId": m["id"], **m["_gpuFault"], "healthReport": e, "twin": twin}
 
 
 @router.delete("/machine/{machineId}/gpu/fault", status_code=202)
@@ -570,6 +573,7 @@ def clear_gpu_fault(machineId: str):
     m = _machine(machineId)
     m.pop("_gpuFault", None)
     m["_reports"].pop(GPU_FAULT_SOURCE, None)
+    _ai(aiinfra.gpu_fault_recover, m.get("_trayId") or m["id"])
     return {"message": "GPU fault cleared"}
 
 

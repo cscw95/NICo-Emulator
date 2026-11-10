@@ -12,7 +12,8 @@ P = "/v2/org/neocloud/nico"
 @pytest.fixture
 def calls(monkeypatch):
     seen = []
-    for name in ("chassis_reset", "gpu_reset", "reset_power", "attach_dpu", "detach_dpu"):
+    for name in ("chassis_reset", "gpu_reset", "reset_power", "attach_dpu", "detach_dpu",
+                 "gpu_fault_inject", "gpu_fault_recover"):
         def rec(*a, _n=name, **k):
             seen.append((_n,) + a)
             return {"attachment_id": "att-x"} if _n == "attach_dpu" else {}
@@ -350,6 +351,16 @@ def test_gpu_fault_reset_transient_vs_persistent(client, calls):
     assert client.get(f"{P}/machine/{mid}").json()["health"]["alerts"]
     assert client.delete(f"{P}/machine/{mid}/gpu/fault").status_code == 202
     assert not client.get(f"{P}/machine/{mid}").json()["health"]["alerts"]
+
+
+def test_gpu_fault_drives_ai_infra_twin(client, calls):
+    """Integration: the NICo fault is mirrored onto the AI-Infra tray twin."""
+    mid = client.get(f"{P}/machine").json()[0]["id"]
+    client.post(f"{P}/machine/{mid}/gpu/fault", json={"xid": 48, "gpu": 1, "persistent": True})
+    inj = [c for c in calls if c[0] == "gpu_fault_inject"]
+    assert inj and inj[0][2:] == (1, 48, False)
+    client.delete(f"{P}/machine/{mid}/gpu/fault")
+    assert [c for c in calls if c[0] == "gpu_fault_recover"]
 
 
 def test_gpu_fault_cleared_by_reboot(client, calls):

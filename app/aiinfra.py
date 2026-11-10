@@ -202,6 +202,21 @@ def gpu_reset(system_id: str) -> Dict[str, Any]:
                     json={})
 
 
+def gpu_fault_inject(tray_id: str, gpu: int = 0, xid: int = 79,
+                     reset_recovers: Optional[bool] = None) -> Dict[str, Any]:
+    """Inject an XID on one GPU of the tray twin (AI-Infra /emulator/v1/gpu-faults,
+    F10 source side): DCGM, Redfish health and the GpuReset Task follow it."""
+    body: Dict[str, Any] = {"kind": "xid", "tray_id": tray_id, "gpu": gpu, "xid": xid}
+    if reset_recovers is not None:
+        body["reset_recovers"] = reset_recovers
+    return _request("POST", "/emulator/v1/gpu-faults/inject", json=body)
+
+
+def gpu_fault_recover(tray_id: str) -> Dict[str, Any]:
+    """Clear every active GPU fault on the tray twin."""
+    return _request("POST", "/emulator/v1/gpu-faults/recover", json={"tray_id": tray_id})
+
+
 def thermal(chassis_id: str) -> Dict[str, Any]:
     """Redfish ThermalSubsystem (incl. LeakDetection) — short read timeout."""
     return _request("GET", f"/redfish/v1/Chassis/{_q(chassis_id)}/ThermalSubsystem",
