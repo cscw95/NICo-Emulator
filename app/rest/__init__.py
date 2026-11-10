@@ -1,8 +1,10 @@
 """NICo REST surface — ``/v2/org/{org}/nico`` (dsx-ai-factory/infra-controller
 rest-api/openapi/spec.yaml). See docs/nico-rest-paths.md."""
 from . import common, inventory, network, core, rack
+from . import bringup
 
-ROUTERS = [core.router, network.router, rack.router, rack.hooks]
+ROUTERS = [core.router, network.router, rack.router, rack.hooks,
+           bringup.router, bringup.hooks]
 
 
 def reset() -> None:

@@ -618,6 +618,8 @@ def run_validation(machineId: str, body: Optional[Dict[str, Any]] = Body(None)):
                                 "validation passed" if ok else "validation failed")
     STORE.event("info" if ok else "warning", "NICo.2.3.MachineValidation",
                 [m["id"], run["status"]["state"]])
+    from . import bringup
+    bringup.refresh_rack(m.get("_rackId"))
     return run
 
 
