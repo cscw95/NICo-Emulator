@@ -122,6 +122,13 @@ Decommissioning, Decommissioned, Unknown`). The emulator also returns
 `/nico-bridge` host states map onto the same record: `pool_ready → ready`, `released → sanitizing` (wipe pending, status `Reset`),
 `reserved/provisioning/provisioned/allocated → assigned`.
 
+## v2 additions (F08 / F12)
+
+- **NOCP writes are REST-only** (NOCP `NicoRestAdapter`, `NOCP_NICO_API=rest`): hold = `PATCH /machine/{id}` labels `nocp.state` (x-neocloud: a held machine is never auto-picked), tenant `POST /allocation` + `POST /vpc`, `POST /instance {machineId}` (boots the twin: power cycle + PXE, then DPU attach), isolation `POST /infiniband-partition` / `/nvlink-logical-partition` / `/spectrumx-partition` + `PATCH /instance/{id} {infinibandInterfaces}` (DPU P_Key bind), release `DELETE /instance/{id}` → `GET /instance/{id}/status-history` (tombstone: `Terminating` … `Terminated: machine … cleanup complete`) → partition `DELETE`.
+- **x-neocloud `neocloud.io/partition-key` label** on `POST /infiniband-partition` requests that P_Key (spec has no key field; invalid/taken → auto).
+- **`GET /emulator/v1/bridge-calls`** — every HTTP call that reached `/nico-bridge/*` since reset (event `NICo.2.3.DeprecatedBridgeCall`). e2e asserts 0.
+- **Machine state events (F12)** — each lifecycle change publishes upstream `ManagedHostStateChangeMessage` (`docs/upstream/nico-machine-state.asyncapi.yaml`, dsx-exchange@3358e108d9ad) on channel `NICO/v1/machine/{machineId}/state`, wrapped in a CloudEvents 1.0 envelope, to AI-Infra `POST /exchange/v1/publish`. Outbox: `GET /emulator/v1/machine-events`. `NICO_EXCHANGE_PUBLISH=0` disables delivery.
+
 ## Not emulated (present in spec.yaml)
 
 tenant account, credential/bmc/uefi/rotation, measured-boot, site-explorer, ipblock,

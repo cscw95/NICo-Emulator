@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, Request, Response
 
-from .. import __version__, aiinfra, bridge
+from .. import __version__, aiinfra, bridge, machine_events
 from ..store import STORE
 from . import crud, inventory
 from .common import (PREFIX, PROVIDER_ID, err, history, new_obj, now, objs,
@@ -627,6 +627,23 @@ def validation_results(machineId: str):
 
 
 # ── instance ──────────────────────────────────────────────────────────
+# x-neocloud: a machine labelled ``nocp.state`` = reserved|provisioning|provisioned
+# is held by NOCP for a pending order (PATCH /machine/{id} labels) — never
+# auto-picked by instanceTypeId, only targeted by machineId.
+HOLD_LABEL = "nocp.state"
+HELD = ("reserved", "provisioning", "provisioned")
+
+
+def _physical_boot(m: Dict[str, Any], image: str) -> None:
+    """Instance create boots the OS: power-cycle + PXE/DHCP on the AI-Infra twin
+    (best effort; the old /nico-bridge provision step did the same)."""
+    tray = m.get("_trayId")
+    if tray:
+        _ai(aiinfra.reset_power, tray, "ForceRestart")
+        _ai(aiinfra.provision, tray, planned=True)
+    STORE.event("info", "NICo.2.3.InstanceBoot", [m["id"], image or "default"])
+
+
 def _pick_machine(body: Dict[str, Any], site_id: str) -> Dict[str, Any]:
     if body.get("machineId"):
         m = _machine(body["machineId"])
@@ -642,7 +659,8 @@ def _pick_machine(body: Dict[str, Any], site_id: str) -> Dict[str, Any]:
         if m["siteId"] == site_id and m.get("instanceTypeId") == it_id \
                 and inventory.lifecycle(m) == "ready" and m["_lifecycle"] == "ready" \
                 and (body.get("allowUnhealthyMachine") or inventory.is_healthy(m)) \
-                and not (bridge._hosts.get(m["id"]) or {}).get("cordoned"):
+                and not (bridge._hosts.get(m["id"]) or {}).get("cordoned") \
+                and (m.get("labels") or {}).get(HOLD_LABEL) not in HELD:
             return m
     err(409, f"no Ready machine of instance type {it_id} at site {site_id}")
 
@@ -707,6 +725,9 @@ def create_instance(request: Request, body: Dict[str, Any] = Body(...)):
     quota = _quota(body["tenantId"], site_id, it_id)
     if quota is not None and _used(body["tenantId"], site_id, it_id) + 1 > quota:
         err(409, f"allocation exhausted for instance type {it_id} (limit {quota})")
+    machine_events.emit(m, "assigned", instance_state="init")
+    os_obj = objs("operating-system").get(body.get("operatingSystemId") or "") or {}
+    _physical_boot(m, os_obj.get("name") or (m.get("labels") or {}).get("nocp.image", ""))
     hv = bridge.allocate(bridge._InstanceBody(host_id=m["id"], tenant_ref=body["tenantId"]))
     inventory.set_lifecycle(m, "assigned", f"assigned to {hv['instance_id']}")
     ts = now()
@@ -759,14 +780,33 @@ def update_instance(instanceId: str, body: Dict[str, Any] = Body(...)):
     i = objs("instance").get(instanceId) or err(404, f"instance {instanceId} not found")
     for k in ("name", "description", "labels", "userData", "ipxeScript",
               "networkSecurityGroupId", "sshKeyGroupIds", "operatingSystemId",
-              "nvLinkInterfaces", "infinibandInterfaces"):
+              "nvLinkInterfaces", "infinibandInterfaces", "spectrumXAttachments"):
         if k in body:
             i[k] = body[k]
+    if body.get("infinibandInterfaces"):
+        _attach_ib(i, body["infinibandInterfaces"])
     if body.get("triggerReboot"):
         _ai(aiinfra.reset_power, (inventory.machine(i["machineId"]) or {}).get("_trayId") or i["machineId"],
             "ForceRestart")
     i["updated"] = now()
     return _inst_view(i)
+
+
+def _attach_ib(i: Dict[str, Any], ifaces: List[Dict[str, Any]]) -> None:
+    """Bind the instance's DPU to its InfiniBand partition(s) on AI-Infra so the
+    physical P_Key equals the NICo partitionKey (best effort)."""
+    vpc = objs("vpc").get(i.get("vpcId") or "") or {}
+    for f in ifaces:
+        p = objs("infiniband-partition").get(f.get("partitionId") or "")
+        if not p:
+            err(400, f"infiniband partition {f.get('partitionId')} not found")
+        net = {"network_id": f"net-{i['tenantId']}", "tenant_id": i["tenantId"],
+               "network_type": "vxlan", "vni": vpc.get("vni"),
+               "vrf": (vpc.get("labels") or {}).get("vrf") or i["tenantId"],
+               "subnet": "10.200.0.0/16", "fabric": "compute",
+               "ib_pkey": int(p["partitionKey"], 16)}
+        _ai(aiinfra.attach_dpu, f"{(inventory.machine(i['machineId']) or {}).get('_trayId') or i['machineId']}-dpu-0",
+            i["tenantId"], net)
 
 
 @router.delete("/instance/{instanceId}", status_code=202)
@@ -777,8 +817,16 @@ def delete_instance(instanceId: str, body: Optional[Dict[str, Any]] = Body(None)
     except Exception:                    # already released on the bridge
         pass
     m = inventory.machine(i["machineId"])
+    history(i, "Terminating", "termination requested"
+            + (f"; machine health issue: {(body or {})['machineHealthIssue'].get('summary')}"
+               if (body or {}).get("machineHealthIssue") else ""))
     if m:
         inventory.set_lifecycle(m, "sanitizing", f"sanitizing after {instanceId}")
+    # Upstream: the Instance is gone once its Temporal delete workflow ends
+    # (rest-api/workflow/pkg/workflow/instance/delete.go). Keep a tombstone so
+    # status-history still answers while the machine is in cleanup.
+    i["_terminated"] = True
+    objs("instance-terminated")[instanceId] = i
     objs("instance").pop(instanceId, None)
     STORE.event("info", "NICo.2.3.InstanceDeleted", [instanceId])
     return {"message": "Instance deletion request was accepted"}
@@ -786,7 +834,14 @@ def delete_instance(instanceId: str, body: Optional[Dict[str, Any]] = Body(None)
 
 @router.get("/instance/{instanceId}/status-history")
 def instance_status_history(instanceId: str):
-    return _inst(instanceId).get("statusHistory", [])
+    t = objs("instance-terminated").get(instanceId)
+    if t is None:
+        return _inst(instanceId).get("statusHistory", [])
+    m = inventory.machine(t["machineId"])
+    if m and not t.get("_cleaned") and inventory.lifecycle(m) == "ready":
+        t["_cleaned"] = True             # machine cleanup (Reset → Ready) finished
+        history(t, "Terminating", f"Terminated: machine {m['id']} cleanup complete (Ready)")
+    return t.get("statusHistory", [])
 
 
 # ── operating system / ssh keys ───────────────────────────────────────

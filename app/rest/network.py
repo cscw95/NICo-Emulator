@@ -67,8 +67,26 @@ def _nsg_create(o: Dict[str, Any], _: Dict[str, Any]) -> None:
     o.setdefault("labels", {})
 
 
-def _ib_create(o: Dict[str, Any], _: Dict[str, Any]) -> None:
-    o["partitionKey"] = hex(next(_pkey))
+# x-neocloud: the spec's InfiniBandPartitionCreateRequest has no key field (the
+# controller assigns partitionKey). NOCP keeps one UFM P_Key per tenant, so it may
+# ask for that value with this label; an invalid or taken key is auto-assigned.
+PKEY_LABEL = "neocloud.io/partition-key"
+
+
+def _requested_pkey(body: Dict[str, Any]) -> str:
+    want = (body.get("labels") or {}).get(PKEY_LABEL)
+    try:
+        k = int(str(want), 16) if want else 0
+    except ValueError:
+        k = 0
+    taken = {p.get("partitionKey") for p in objs("infiniband-partition").values()}
+    if k & 0x7FFF not in (0, 0x7FFF) and k <= 0xFFFF and hex(k) not in taken:
+        return hex(k)
+    return hex(next(_pkey))
+
+
+def _ib_create(o: Dict[str, Any], body: Dict[str, Any]) -> None:
+    o["partitionKey"] = _requested_pkey(body)
     o["partitionName"] = o["name"]
     o["controllerIBPartitionId"] = f"ibp-{o['id'][:8]}"
     o.setdefault("serviceLevel", 0)
