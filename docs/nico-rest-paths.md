@@ -55,6 +55,7 @@ Spec = present in spec.yaml. **Ext** = emulator extension, not in spec.yaml (kep
 | PATCH | `/machine/{machineId}/chassis/{chassisId}/reset` | Spec | → AI-Infra `Chassis.Reset {"ResetType":"PowerCycle"}` |
 | PATCH | `/machine/{machineId}/bmc/reset` | Spec | |
 | POST | `/machine/{machineId}/gpu/reset` | **Ext** | OOB AdminGpuReset (Core gRPC in v2.3) → AI-Infra `POST /redfish/v1/Systems/{id}/Actions/GpuReset` |
+| POST/DELETE | `/machine/{machineId}/gpu/fault` | **Ext** (x-neocloud, F10) | Inject/clear a GPU XID fault as a `gpu-health-monitor` health report (PreventAllocations); `persistent:true` survives `gpu/reset` (reply `resetResult: Failed`) |
 | GET, PUT | `/machine/{machineId}/health-report` | Spec | `MachineHealthReportEntry[]` |
 | DELETE | `/machine/{machineId}/health-report/{source}` | Spec | |
 | GET, POST | `/machine/{machineId}/validation/run` | Spec | POST runs DCGM-style tests; moves lifecycle `validating → ready` (or `failed`) |

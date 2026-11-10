@@ -495,7 +495,10 @@ def machine_power(machineId: str, body: Dict[str, Any] = Body(...)):
         res = _ai(aiinfra.reset_power, tray, POWER_ACTIONS[action])
         STORE.event("info", "NICo.2.3.MachinePowerControl", [m["id"], action])
     history(m, m["status"], f"power {action}")
-    return {"message": "Machine power control request was accepted", "action": action, **res}
+    out = {"message": "Machine power control request was accepted", "action": action, **res}
+    if m.get("_gpuFault") and ("Restart" in action or "cycle" in action.lower()):
+        out["resetResult"] = _clear_gpu_fault(m)      # F10 RebootNode path
+    return out
 
 
 @router.patch("/machine/{machineId}/chassis/{chassisId}/reset", status_code=202)
@@ -521,7 +524,53 @@ def gpu_reset(machineId: str, body: Optional[Dict[str, Any]] = Body(None)):
     _assert_ack(m, body or {})
     res = _ai(aiinfra.gpu_reset, m.get("_trayId") or m["id"])
     STORE.event("warning", "NICo.2.3.AdminGpuReset", [m["id"]])
-    return {"message": "Machine GPU reset request was accepted", **res}
+    # F10: a reset clears a transient GPU fault (its health report); a
+    # persistent one survives, so re-validation fails and NOCP replaces the node.
+    result = _clear_gpu_fault(m)
+    history(m, m["status"], f"gpu reset {result}")
+    return {"message": "Machine GPU reset request was accepted", "resetResult": result,
+            **res}
+
+
+GPU_FAULT_SOURCE = "gpu-health-monitor"
+
+
+def _clear_gpu_fault(m: Dict[str, Any]) -> str:
+    """Reset/reboot outcome: a transient fault clears, a persistent one stays."""
+    fault = m.get("_gpuFault")
+    if fault and fault.get("persistent"):
+        return "Failed"
+    m.pop("_gpuFault", None)
+    m["_reports"].pop(GPU_FAULT_SOURCE, None)
+    return "Succeeded"
+
+
+@router.post("/machine/{machineId}/gpu/fault", status_code=201)
+def gpu_fault(machineId: str, body: Optional[Dict[str, Any]] = Body(None)):
+    """Emulator extension (x-neocloud, F10) — inject a GPU XID fault as an
+    NVSentinel gpu-health-monitor health report (PreventAllocations).
+    ``persistent`` faults survive ``gpu/reset``. DELETE clears it."""
+    m = _machine(machineId)
+    body = body or {}
+    xid = int(body.get("xid", 79))
+    gpu = int(body.get("gpu", 0))
+    m["_gpuFault"] = {"xid": xid, "gpu": gpu, "persistent": bool(body.get("persistent"))}
+    e = {"source": GPU_FAULT_SOURCE, "mode": "Merge", "triggeredBy": "fault-injection",
+         "observedAt": now(), "successes": [],
+         "alerts": [{"id": "GpuXid", "target": f"GPU{gpu}", "inAlertSince": now(),
+                     "message": f"XID {xid} on GPU{gpu}", "tenantMessage": None,
+                     "classifications": ["PreventAllocations"]}]}
+    m["_reports"][GPU_FAULT_SOURCE] = e
+    STORE.event("warning", "NICo.2.3.MachineHealthReport", [m["id"], GPU_FAULT_SOURCE, 1])
+    return {"machineId": m["id"], **m["_gpuFault"], "healthReport": e}
+
+
+@router.delete("/machine/{machineId}/gpu/fault", status_code=202)
+def clear_gpu_fault(machineId: str):
+    m = _machine(machineId)
+    m.pop("_gpuFault", None)
+    m["_reports"].pop(GPU_FAULT_SOURCE, None)
+    return {"message": "GPU fault cleared"}
 
 
 @router.post("/machine/{machineId}/decommission", status_code=202)

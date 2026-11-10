@@ -333,3 +333,29 @@ def test_bridge_released_host_is_not_advertised_ready(client, calls):
             break
     assert client.get(f"/nico-bridge/hosts/{mid}").json()["state"] == "pool_ready"
     assert client.get(f"{P}/machine/{mid}").json()["status"] == "Ready"
+
+
+def test_gpu_fault_reset_transient_vs_persistent(client, calls):
+    """F10: transient XID cleared by gpu/reset; persistent one survives."""
+    mid = client.get(f"{P}/machine").json()[0]["id"]
+    r = client.post(f"{P}/machine/{mid}/gpu/fault", json={"xid": 79, "gpu": 2})
+    assert r.status_code == 201 and r.json()["healthReport"]["source"] == "gpu-health-monitor"
+    assert client.get(f"{P}/machine/{mid}").json()["health"]["alerts"][0]["id"] == "GpuXid"
+    r = client.post(f"{P}/machine/{mid}/gpu/reset", json={"acknowledgeAttachedInstance": True})
+    assert r.status_code == 202 and r.json()["resetResult"] == "Succeeded"
+    assert not client.get(f"{P}/machine/{mid}").json()["health"]["alerts"]
+    client.post(f"{P}/machine/{mid}/gpu/fault", json={"xid": 79, "persistent": True})
+    r = client.post(f"{P}/machine/{mid}/gpu/reset", json={"acknowledgeAttachedInstance": True})
+    assert r.json()["resetResult"] == "Failed"
+    assert client.get(f"{P}/machine/{mid}").json()["health"]["alerts"]
+    assert client.delete(f"{P}/machine/{mid}/gpu/fault").status_code == 202
+    assert not client.get(f"{P}/machine/{mid}").json()["health"]["alerts"]
+
+
+def test_gpu_fault_cleared_by_reboot(client, calls):
+    mid = client.get(f"{P}/machine").json()[0]["id"]
+    client.post(f"{P}/machine/{mid}/gpu/fault", json={"xid": 79})
+    r = client.patch(f"{P}/machine/{mid}/power", json={"action": "ForceRestart",
+                                                       "acknowledgeAttachedInstance": True})
+    assert r.json()["resetResult"] == "Succeeded"
+    assert not client.get(f"{P}/machine/{mid}").json()["health"]["alerts"]
